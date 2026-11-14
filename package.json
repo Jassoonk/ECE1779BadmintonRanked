@@ -1,0 +1,15 @@
+{
+  "name": "badminton-ranked",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ranked matchmaking for a weekly badminton group",
+  "type": "module",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  }
+}

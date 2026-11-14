@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      PORT: 3000
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: badminton
+      PGPASSWORD: local-development-only
+      PGDATABASE: badminton_ranked
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: badminton
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: badminton_ranked
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U badminton -d badminton_ranked"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
