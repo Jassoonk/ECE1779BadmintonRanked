@@ -3,9 +3,7 @@ import express from 'express';
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('Badminton Ranked server is running!');
-});
+app.use(express.static('frontend'));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
