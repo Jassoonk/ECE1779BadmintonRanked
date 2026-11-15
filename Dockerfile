@@ -9,7 +9,6 @@ COPY app.js ./
 COPY db.js ./
 COPY frontend ./frontend
 
-
 USER node
 
 EXPOSE 3000
