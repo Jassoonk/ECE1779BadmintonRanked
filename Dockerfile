@@ -6,7 +6,9 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY app.js ./
+COPY db.js ./
 COPY frontend ./frontend
+
 
 USER node
 
