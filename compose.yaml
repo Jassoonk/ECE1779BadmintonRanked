@@ -22,6 +22,8 @@ services:
       POSTGRES_DB: badminton_ranked
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U badminton -d badminton_ranked"]
       interval: 5s
