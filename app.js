@@ -1,9 +1,9 @@
-
 import express from 'express';
-import { checkDatabaseConnection } from './db.js';
+import { pool, checkDatabaseConnection } from './db.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
+app.use(express.json());
 
 app.use(express.static('frontend'));
 
@@ -28,6 +28,35 @@ app.get('/db-health', async (req, res) => {
     res.status(503).json({
       status: 'error',
       database: 'disconnected'
+    });
+  }
+});
+
+app.post('/users', async (req, res) => {
+  const { display_name } = req.body ?? {};
+
+  if (
+    typeof display_name !== 'string' ||
+    !display_name.trim() ||
+    display_name.trim().length > 100
+  ) {
+    return res.status(400).json({
+      error: 'display_name must be between 1 and 100 characters'
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      'INSERT INTO users (display_name) VALUES ($1) RETURNING id, display_name, rating, created_at',
+      [display_name.trim()]
+    );
+
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Failed to create user:', error);
+
+    return res.status(500).json({
+      error: 'Failed to create user'
     });
   }
 });
