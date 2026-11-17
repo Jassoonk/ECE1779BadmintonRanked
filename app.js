@@ -170,6 +170,54 @@ app.post('/sessions/:id/check-ins', async (req, res) => {
   }
 });
 
+
+app.get('/sessions/:id/check-ins', async (req, res) => {
+  const sessionId = Number(req.params.id);
+
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+    return res.status(400).json({
+      error: 'Valid session_id is required'
+    });
+  }
+
+  try {
+    const session = await pool.query(
+      'SELECT id FROM sessions WHERE id = $1',
+      [sessionId]
+    );
+
+    if (session.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         u.id AS user_id,
+         u.display_name,
+         u.rating,
+         c.checked_in_at
+       FROM check_ins c
+       JOIN users u ON c.user_id = u.id
+       WHERE c.session_id = $1
+       ORDER BY c.checked_in_at ASC, c.id ASC`,
+      [sessionId]
+    );
+
+    return res.json({
+      session_id: sessionId,
+      players: result.rows
+    });
+  } catch (error) {
+    console.error('Failed to get check-ins:', error);
+
+    return res.status(500).json({
+      error: 'Failed to get check-ins'
+    });
+  }
+});
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
 });
