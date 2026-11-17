@@ -102,6 +102,73 @@ app.post('/sessions', async (req, res) => {
   }
 });
 
+app.post('/sessions/:id/check-ins', async (req, res) => {
+  const sessionId = Number(req.params.id);
+  const userId = req.body?.user_id;
+
+  if (
+    !Number.isSafeInteger(sessionId) ||
+    sessionId <= 0 ||
+    !Number.isSafeInteger(userId) ||
+    userId <= 0
+  ) {
+    return res.status(400).json({
+      error: 'Valid session_id and user_id are required'
+    });
+  }
+
+  try {
+    const session = await pool.query(
+      'SELECT id, status FROM sessions WHERE id = $1',
+      [sessionId]
+    );
+
+    if (session.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
+    }
+
+    if (session.rows[0].status === 'completed') {
+      return res.status(409).json({
+        error: 'Cannot check in to a completed session'
+      });
+    }
+
+    const user = await pool.query(
+      'SELECT id FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO check_ins (user_id, session_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, session_id) DO NOTHING
+       RETURNING id, user_id, session_id, checked_in_at`,
+      [userId, sessionId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(409).json({
+        error: 'User already checked in'
+      });
+    }
+
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Failed to check in player:', error);
+
+    return res.status(500).json({
+      error: 'Failed to check in player'
+    });
+  }
+});
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
