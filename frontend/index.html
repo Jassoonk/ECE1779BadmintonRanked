@@ -13,6 +13,7 @@
   >
 
   <script src="/registration.js" defer></script>
+  <script src="/leaderboard.js" defer></script>
 </head>
 <body class="bg-body-tertiary">
   <main class="container py-5">
@@ -114,6 +115,40 @@
               class="mt-3 mb-0 text-break"
               role="status"
             ></p>
+          </div>
+        </section>
+
+        <section
+          class="card border-0 shadow-sm mb-4"
+          aria-labelledby="leaderboard-heading"
+        >
+          <div class="card-body p-4">
+            <h2 id="leaderboard-heading" class="h4">Leaderboard</h2>
+            <p class="text-body-secondary">
+              Players ordered by highest rating first.
+            </p>
+
+            <div class="table-responsive">
+              <table class="table table-striped align-middle mb-0">
+                <caption class="visually-hidden">
+                  Player leaderboard ordered by rating
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Position</th>
+                    <th scope="col">Player</th>
+                    <th scope="col" class="text-end">Rating</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboard-body"></tbody>
+              </table>
+            </div>
+
+            <p
+              id="leaderboard-message"
+              class="small text-body-secondary mt-3 mb-0"
+              role="status"
+            >Player ratings will appear here once loading is connected.</p>
           </div>
         </section>
 

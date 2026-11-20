@@ -32,6 +32,22 @@ app.get('/db-health', async (req, res) => {
   }
 });
 
+app.get('/leaderboard', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, display_name, rating FROM users ORDER BY rating DESC, id ASC'
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Failed to load leaderboard:', error);
+
+    res.status(500).json({
+      error: 'Failed to load leaderboard'
+    });
+  }
+});
+
 app.post('/users', async (req, res) => {
   const { display_name, starting_rank } = req.body ?? {};
 

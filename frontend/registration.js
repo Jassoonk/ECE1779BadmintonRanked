@@ -42,6 +42,7 @@ form.addEventListener('submit', async (event) => {
       `Created ${result.display_name}! Starting rating: ${result.rating}.`;
 
     form.reset();
+    loadLeaderboard();
   } catch {
     message.textContent =
       'Could not confirm player creation. Check your connection before trying again.';
