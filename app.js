@@ -33,7 +33,7 @@ app.get('/db-health', async (req, res) => {
 });
 
 app.post('/users', async (req, res) => {
-  const { display_name } = req.body ?? {};
+  const { display_name, starting_rank } = req.body ?? {};
 
   if (
     typeof display_name !== 'string' ||
@@ -45,10 +45,23 @@ app.post('/users', async (req, res) => {
     });
   }
 
+  const startingRatings = { bronze: 200, silver: 400, gold: 600 };
+
+  if (
+    typeof starting_rank !== 'string' ||
+    !Object.hasOwn(startingRatings, starting_rank)
+  ) {
+    return res.status(400).json({
+      error: 'starting_rank must be bronze, silver, or gold'
+    });
+  }
+
+  const rating = startingRatings[starting_rank];
+
   try {
     const result = await pool.query(
-      'INSERT INTO users (display_name) VALUES ($1) RETURNING id, display_name, rating, created_at',
-      [display_name.trim()]
+      'INSERT INTO users (display_name, rating) VALUES ($1, $2) RETURNING id, display_name, rating, created_at',
+      [display_name.trim(), rating]
     );
 
     return res.status(201).json(result.rows[0]);
