@@ -29,6 +29,59 @@
 
         <section
           class="card border-0 shadow-sm mb-4"
+          aria-labelledby="login-heading"
+        >
+          <div class="card-body p-4">
+            <h2 id="login-heading" class="h4 mb-4">Sign in</h2>
+
+            <form id="login-form" method="post">
+              <div class="mb-3">
+                <label for="login-email" class="form-label">Email</label>
+                <input
+                  id="login-email"
+                  name="email"
+                  type="email"
+                  class="form-control"
+                  autocomplete="username"
+                  required
+                >
+              </div>
+
+              <div class="mb-4">
+                <label for="login-password" class="form-label">
+                  Password
+                </label>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  class="form-control"
+                  autocomplete="current-password"
+                  required
+                >
+              </div>
+
+              <button
+                id="sign-in"
+                type="submit"
+                class="btn btn-success w-100"
+                disabled
+              >
+                Sign in
+              </button>
+            </form>
+
+            <p
+              id="login-message"
+              class="small text-body-secondary mt-3 mb-0"
+              role="status"
+            >Sign-in will be available once account login is connected.</p>
+          </div>
+        </section>
+
+        <section
+          id="player-creation"
+          class="card border-0 shadow-sm mb-4 d-none"
           aria-labelledby="player-heading"
         >
           <div class="card-body p-4">
