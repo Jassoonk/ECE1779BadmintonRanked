@@ -1,4 +1,4 @@
-﻿FROM node:24-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -7,8 +7,7 @@ RUN npm ci --omit=dev
 
 COPY app.js ./
 COPY db.js ./
-COPY soloRanked.js ./
-COPY soloElo.js ./
+COPY doubles.js ./
 COPY frontend ./frontend
 
 USER node

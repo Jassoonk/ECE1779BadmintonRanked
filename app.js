@@ -1,4 +1,4 @@
-﻿import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
 import { pool, checkDatabaseConnection } from './db.js';
@@ -201,7 +201,7 @@ app.get('/auth/session', async (req, res) => {
   }
 });
 
-import { createSoloRankedRouter } from './soloRanked.js';
+import { createDoublesRouter } from './doubles.js';
 async function requireSession(req, res, next) {
   const cookies = req.get('cookie') ?? '';
   const sessionCookie = cookies
@@ -236,7 +236,7 @@ async function requireSession(req, res, next) {
     return res.status(500).json({ error: 'Could not verify session.' });
   }
 }
-app.use('/solo', createSoloRankedRouter(pool, requireSession));
+app.use('/doubles', createDoublesRouter(pool, requireSession));
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);

@@ -15,6 +15,7 @@
   <script src="/registration.js" defer></script>
   <script src="/leaderboard.js" defer></script>
   <script src="/login.js" defer></script>
+  <script src="/doubles.js" defer></script>
 </head>
 <body class="bg-body-tertiary">
   <main class="container py-5">
@@ -89,7 +90,7 @@
                     for="rank-bronze"
                     class="btn btn-outline-secondary flex-fill"
                   >
-                    Bronze — 200
+                    Bronze 鈥?200
                   </label>
 
                   <input
@@ -103,7 +104,7 @@
                     for="rank-silver"
                     class="btn btn-outline-secondary flex-fill"
                   >
-                    Silver — 400
+                    Silver 鈥?400
                   </label>
 
                   <input
@@ -117,7 +118,7 @@
                     for="rank-gold"
                     class="btn btn-outline-secondary flex-fill"
                   >
-                    Gold — 600
+                    Gold 鈥?600
                   </label>
                 </div>
               </fieldset>
@@ -200,29 +201,22 @@
           </div>
         </section>
 
-        <section
-          class="card border-0 shadow-sm"
-          aria-labelledby="queue-heading"
-        >
-          <div class="card-body p-4">
-            <h2 id="queue-heading" class="h4">Join the game</h2>
-            <p class="text-body-secondary">
-              Queue up to find a doubles match with other players.
-            </p>
-
-            <button
-              type="button"
-              class="btn btn-outline-success w-100"
-              disabled
-            >
-              Solo Queue
-            </button>
-
-            <p class="small text-body-secondary mt-3 mb-0">
-              Matchmaking is coming soon.
-            </p>
-          </div>
-        </section>
+        <section class="card border-0 shadow-sm" aria-labelledby="queue-heading">
+  <div class="card-body p-4">
+    <h2 id="queue-heading" class="h4">2v2 Ranked Doubles</h2>
+    <p class="text-body-secondary">Solo: find three other players. Duo: invite an online teammate and find two opponents.</p>
+    <p id="doubles-status" role="status">Checking session...</p>
+    <div id="doubles-actions" hidden>
+      <button id="doubles-solo" type="button" class="btn btn-success w-100 mb-3">Start Solo Queue (2v2)</button>
+      <h3 class="h6">Duo Queue</h3>
+      <div id="doubles-online"></div>
+    </div>
+    <div id="doubles-invites"></div>
+    <button id="doubles-cancel" type="button" class="btn btn-outline-danger w-100" hidden>Cancel Queue</button>
+    <div id="doubles-details" class="mt-3"></div>
+    <p id="doubles-message" class="small text-body-secondary mt-3" role="status"></p>
+  </div>
+</section>
 
       </div>
     </div>
