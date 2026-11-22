@@ -2,6 +2,7 @@ const form = document.querySelector('#registration-form');
 const button = document.querySelector('#register-button');
 const message = document.querySelector('#registration-message');
 
+// Submit registration as JSON and disable the button while the request is in flight.
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -31,6 +32,7 @@ form.addEventListener('submit', async (event) => {
 
     message.textContent =
       `Registered ${player.display_name} with a starting rating of ${player.rating}. You can now sign in.`;
+    // Clear the successful submission and reload the leaderboard with the new player's starting rating.
     form.reset();
     loadLeaderboard();
   } catch {
@@ -40,4 +42,5 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+// Enable the submit button after the JavaScript handler is installed.
 button.disabled = false;

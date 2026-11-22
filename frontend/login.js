@@ -3,6 +3,7 @@ const signInButton = document.querySelector('#sign-in-button');
 const signInMessage = document.querySelector('#sign-in-message');
 const registrationCard = document.querySelector('#registration-card');
 
+// Replace the account forms with the player's current display name and rating.
 function showSignedIn(player) {
   signInForm.reset();
   signInForm.hidden = true;
@@ -10,6 +11,7 @@ function showSignedIn(player) {
   signInMessage.textContent = `Signed in as ${player.display_name}. Rating: ${player.rating}.`;
 }
 
+// Check for an existing session before enabling manual sign-in. A 401 is expected for visitors.
 async function restoreSession() {
   try {
     const response = await fetch('/auth/session', { cache: 'no-store' });
@@ -26,6 +28,7 @@ async function restoreSession() {
   }
 }
 
+// Submit credentials as JSON. The server sets the session cookie on success.
 signInForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
