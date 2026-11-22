@@ -7,7 +7,6 @@ RUN npm ci --omit=dev
 
 COPY app.js ./
 COPY db.js ./
-COPY soloAuth.js ./
 COPY soloRanked.js ./
 COPY soloElo.js ./
 COPY frontend ./frontend
@@ -17,5 +16,6 @@ USER node
 EXPOSE 3000
 
 CMD ["node", "app.js"]
+
 
 

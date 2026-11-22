@@ -1,10 +1,10 @@
 ﻿import { calculateElo } from './soloElo.js';
 import express from 'express';
-import { createSoloAuth } from './soloAuth.js';
 
-function createSoloRankedRouter(pool) {
+
+function createSoloRankedRouter(pool, requireAuth) {
   const router = express.Router();
-  const requireAuth = createSoloAuth(pool);
+
 
   router.post('/queue/join', requireAuth, async (req, res) => {
     const userId = req.soloUser.id;
@@ -411,6 +411,7 @@ function createSoloRankedRouter(pool) {
 }
 
 export { createSoloRankedRouter };
+
 
 
 

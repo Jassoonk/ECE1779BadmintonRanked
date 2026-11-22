@@ -202,10 +202,45 @@ app.get('/auth/session', async (req, res) => {
 });
 
 import { createSoloRankedRouter } from './soloRanked.js';
-app.use('/solo', createSoloRankedRouter(pool));
+async function requireSession(req, res, next) {
+  const cookies = req.get('cookie') ?? '';
+  const sessionCookie = cookies
+    .split(';')
+    .map(cookie => cookie.trim())
+    .find(cookie => cookie.startsWith('session='));
+
+  const token = sessionCookie?.slice('session='.length) ?? '';
+
+  if (!/^[0-9a-f]{64}$/.test(token)) {
+    return res.status(401).json({ error: 'Sign in to continue.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT users.id, users.display_name, users.rating
+       FROM user_sessions
+       JOIN users ON users.id = user_sessions.user_id
+       WHERE user_sessions.token_hash = $1
+         AND user_sessions.expires_at > NOW()`,
+      [hashSessionToken(token)]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(401).json({ error: 'Sign in to continue.' });
+    }
+
+    req.soloUser = result.rows[0];
+    next();
+  } catch (error) {
+    console.error('Session verification failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not verify session.' });
+  }
+}
+app.use('/solo', createSoloRankedRouter(pool, requireSession));
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
 });
+
 
 
