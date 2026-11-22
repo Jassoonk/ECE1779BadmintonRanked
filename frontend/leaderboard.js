@@ -1,6 +1,7 @@
 const leaderboardBody = document.querySelector('#leaderboard-body');
 const leaderboardMessage = document.querySelector('#leaderboard-message');
 
+// Fetch current ratings on page load and when registration or a finished match changes the rankings.
 async function loadLeaderboard() {
   leaderboardMessage.textContent = 'Loading leaderboard...';
 
@@ -17,6 +18,7 @@ async function loadLeaderboard() {
       throw new Error('Invalid leaderboard response');
     }
 
+    // Build the rows off-screen, then replace the table body in one DOM update.
     const rows = document.createDocumentFragment();
 
     players.forEach((player, index) => {
@@ -25,6 +27,7 @@ async function loadLeaderboard() {
       const nameCell = document.createElement('td');
       const ratingCell = document.createElement('td');
 
+      // Use the order supplied by the API to assign leaderboard positions.
       positionCell.textContent = String(index + 1);
       nameCell.textContent = player.display_name;
       ratingCell.textContent = String(player.rating);

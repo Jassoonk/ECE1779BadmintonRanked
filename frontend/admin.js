@@ -1,3 +1,4 @@
+// Wire the admin page to the password check, health endpoints, and player list.
 const adminForm = document.querySelector('#admin-login-form');
 const adminFields = document.querySelector('#admin-login-fields');
 const adminMessage = document.querySelector('#admin-login-message');
@@ -7,6 +8,7 @@ const dbStatus = document.querySelector('#admin-db-status');
 const playersBody = document.querySelector('#admin-players-body');
 const playersMessage = document.querySelector('#admin-players-message');
 
+// Show each endpoint's current health and cap how long the browser waits for a response.
 async function checkHealth(path, statusElement) {
   statusElement.textContent = 'Checking…';
 
@@ -21,6 +23,7 @@ async function checkHealth(path, statusElement) {
   }
 }
 
+// Reuse leaderboard data to populate the dashboard's player table.
 async function loadAdminPlayers() {
   playersMessage.textContent = 'Loading players…';
 
@@ -56,6 +59,7 @@ async function loadAdminPlayers() {
   }
 }
 
+// Send the password as JSON and keep dashboard controls hidden during verification.
 adminForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -78,6 +82,7 @@ adminForm.addEventListener('submit', async (event) => {
       adminForm.reset();
       adminDashboard.hidden = false;
 
+      // Load the two health checks and the player list independently after the password is accepted.
       await Promise.all([
         checkHealth('/health', appStatus),
         checkHealth('/db-health', dbStatus),
@@ -93,5 +98,6 @@ adminForm.addEventListener('submit', async (event) => {
   }
 });
 
+// Enable the form after its JavaScript submit handler is installed.
 adminFields.disabled = false;
 adminMessage.textContent = '';

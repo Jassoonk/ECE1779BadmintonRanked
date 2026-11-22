@@ -4,6 +4,7 @@ import express from 'express';
 import { doubles } from './doubles.js';
 import { pool, checkDatabaseConnection } from './db.js';
 
+// Configure the Express server for JSON API requests and static browser assets.
 const app = express();
 const port = process.env.PORT || 3000;
 app.use(express.json());
@@ -14,6 +15,7 @@ app.get('/admin', (_req, res) => {
   res.sendFile('admin.html', { root: 'frontend' });
 });
 
+// The admin password check is available only outside production and serves the local dashboard.
 const localAdminPassword = '123456';
 
 app.post('/admin/login', (req, res) => {
@@ -30,10 +32,12 @@ app.post('/admin/login', (req, res) => {
   return res.json({ message: 'Admin password accepted.' });
 });
 
+// Keep the app liveness check independent of PostgreSQL.
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Report database readiness separately so monitoring can distinguish app and database failures.
 app.get('/db-health', async (req, res) => {
   try {
     const connected = await checkDatabaseConnection();
@@ -55,6 +59,7 @@ app.get('/db-health', async (req, res) => {
   }
 });
 
+// Return public player details, using the player ID to break rating ties consistently.
 app.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(
@@ -71,19 +76,23 @@ app.get('/leaderboard', async (req, res) => {
   }
 });
 
+// Use the same scrypt parameters when creating and verifying stored password hashes.
 const derivePasswordKey = promisify(scrypt);
 const scryptOptions = { N: 2 ** 15, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
 const sessionDurationMs = 8 * 60 * 60 * 1000;
 const startingRatings = { bronze: 200, silver: 400, gold: 600 };
 
+// Canonicalize email addresses so registration and sign-in use the same database key.
 function normalizeEmail(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
+// Store and look up only a digest of each session token in PostgreSQL.
 function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
+// Validate the invite and account fields before running scrypt or writing to the database.
 app.post('/auth/register', async (req, res) => {
   const { email, password, invite_code, display_name, starting_rank } = req.body ?? {};
 
@@ -118,6 +127,7 @@ app.post('/auth/register', async (req, res) => {
   }
 
   try {
+    // Generate a fresh salt and save it alongside the derived key for sign-in.
     const salt = randomBytes(16);
     const key = await derivePasswordKey(password, salt, 64, scryptOptions);
     const passwordHash = salt.toString('hex') + ':' + key.toString('hex');
@@ -129,6 +139,7 @@ app.post('/auth/register', async (req, res) => {
       [normalizedEmail, passwordHash, displayName, startingRatings[starting_rank]]
     );
 
+    // The unique email constraint settles duplicate registrations, including concurrent attempts.
     if (result.rowCount === 0) {
       return res.status(409).json({ error: 'That email is already registered.' });
     }
@@ -140,6 +151,7 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
+// Verify the submitted credentials, then create a browser session.
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body ?? {};
   const normalizedEmail = normalizeEmail(email);
@@ -160,6 +172,7 @@ app.post('/auth/login', async (req, res) => {
     );
     const user = result.rows[0];
     const hashParts = /^([0-9a-f]{32}):([0-9a-f]{128})$/.exec(user?.password_hash ?? '');
+    // Use fixed-size fallback buffers so missing or malformed hashes still go through scrypt and comparison.
     const salt = hashParts ? Buffer.from(hashParts[1], 'hex') : Buffer.alloc(16);
     const savedKey = hashParts ? Buffer.from(hashParts[2], 'hex') : Buffer.alloc(64);
     const enteredKey = await derivePasswordKey(password, salt, 64, scryptOptions);
@@ -168,6 +181,7 @@ app.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Email or password is incorrect.' });
     }
 
+    // Give the cookie and the stored session the same configured lifetime.
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + sessionDurationMs);
 
@@ -189,6 +203,7 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
+// Resolve a session cookie to a current player record before entering protected routes.
 async function requireSession(req, res, next) {
   res.set('Cache-Control', 'no-store');
 
@@ -215,6 +230,7 @@ async function requireSession(req, res, next) {
       return res.status(401).json({ error: 'Sign in to continue.' });
     }
 
+    // Pass the database-backed player to the session endpoint and the doubles router.
     req.player = result.rows[0];
     return next();
   } catch (error) {
@@ -226,6 +242,7 @@ async function requireSession(req, res, next) {
 app.get('/auth/session', requireSession, (req, res) => res.json(req.player));
 app.use('/doubles', requireSession, doubles);
 
+// Bind to all interfaces so the server can receive traffic through the container port mapping.
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
 });

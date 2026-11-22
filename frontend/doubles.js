@@ -1,3 +1,4 @@
+// Keep the doubles lobby's polling and DOM helpers private to this script.
 (() => {
   const byId = id => document.getElementById(id);
   const status = byId('doubles-status');
@@ -12,6 +13,7 @@
   let polling;
   let acting = false;
 
+  // Use the session cookie on same-origin lobby requests and preserve HTTP status for UI error handling.
   async function request(path, method = 'GET', body) {
     const response = await fetch(`/doubles${path}`, {
       method, cache: 'no-store',
@@ -23,6 +25,7 @@
     return data;
   }
 
+  // Serialize user actions with polling, then refresh from the server after every attempt.
   async function act(path, body) {
     if (acting) return;
     acting = true;
@@ -38,6 +41,7 @@
     }
   }
 
+  // Create action buttons that submit through the same request and refresh flow.
   function button(label, style, path, body) {
     const element = document.createElement('button');
     element.type = 'button';
@@ -47,6 +51,7 @@
     return element;
   }
 
+  // Render team rosters, then show result controls for the current match state.
   function renderMatch(match, player) {
     const heading = document.createElement('h3');
     heading.className = 'h6';
@@ -67,6 +72,7 @@
     const text = document.createElement('p');
     text.textContent = `Reported winner: Team ${match.proposed_winning_team}. Waiting for the opposing team.`;
     details.append(text);
+    // Normalize player IDs because the roster and session can return them in different JSON types.
     const teamOf = id => match.players.find(p => String(p.id) === String(id)).team;
     if (teamOf(player.id) !== teamOf(match.submitted_by)) {
       details.append(button('Confirm result', 'success', path + '/confirm', { decision: 'confirm' }),
@@ -74,6 +80,7 @@
     }
   }
 
+  // Send a presence heartbeat before reading the latest invitation, queue, or match state.
   async function update() {
     try {
       const { player } = await request('/presence', 'POST');
@@ -101,6 +108,7 @@
       } else {
         status.textContent = 'Ready to play doubles.';
       }
+      // After a match completes, reload both the leaderboard and the signed-in player's displayed rating.
       if (lastStatus === 'matched' && data.status === 'idle') {
         message.textContent = 'Match complete. Rankings refreshed.';
         loadLeaderboard();
@@ -108,6 +116,7 @@
         if (session.ok) showSignedIn(await session.json());
       }
       lastStatus = data.status;
+      // Fetch teammates only while the picker is open and keep its selection if the player is still online.
       if (duo.open && !actions.hidden) {
         const people = await request('/online');
         const selected = picker.value;
@@ -120,6 +129,7 @@
         status.textContent = `Could not load queue: ${error.message}`;
         return;
       }
+      // Clear lobby controls and match details when there is no valid session.
       actions.hidden = cancel.hidden = true;
       duo.open = false;
       invites.replaceChildren();
@@ -130,6 +140,7 @@
     }
   }
 
+  // Share a single in-flight refresh across interval ticks and user actions.
   function refresh() {
     polling ??= update().finally(() => { polling = null; });
     return polling;
@@ -141,6 +152,7 @@
     else message.textContent = 'Choose an online teammate first.';
   });
   duo.addEventListener('toggle', () => { if (duo.open && !acting) refresh(); });
-  setInterval(() => { if (!acting) refresh(); }, 10000);
+  // Poll every 2 seconds while no action is in progress to keep presence and the lobby state current.
+  setInterval(() => { if (!acting) refresh(); }, 2000);
   refresh();
 })();

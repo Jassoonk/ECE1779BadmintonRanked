@@ -2,13 +2,16 @@ import express from 'express';
 import { pool } from './db.js';
 
 export const doubles = express.Router();
+// Determine presence and invitation expiry using the PostgreSQL clock.
 const onlineSince = "NOW() - INTERVAL '45 seconds'";
 const inviteSince = "NOW() - INTERVAL '3 minutes'";
 
+// Send expected request errors to the router's JSON error handler with an HTTP status.
 function reject(status, message) {
   throw Object.assign(new Error(message), { status });
 }
 
+// Keep PostgreSQL bigint IDs as strings to preserve values beyond JavaScript's safe integer range.
 function checkId(value) {
   const id = String(value ?? '');
   if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
@@ -34,12 +37,14 @@ async function transaction(work) {
   }
 }
 
+// Give each mutating route a transaction and serialize its response only after commit.
 function mutation(path, work) {
   doubles.post(path, async (req, res) => {
     res.json(await transaction(db => work(db, req, res)));
   });
 }
 
+// Use the mean of both player ratings as the team's rating for matchmaking and Elo.
 function average(team) {
   return (team[0].rating + team[1].rating) / 2;
 }
@@ -49,6 +54,7 @@ function chooseTeams(parties, start = 0, selected = [], count = 0) {
   if (count === 4) {
     const duo = selected.find(party => party.length === 2);
     const players = selected.flat();
+    // Keep premade partners together. For four solo players, anchoring the first player avoids mirrored pairings.
     const options = duo
       ? [[duo, players.filter(player => !duo.includes(player))]]
       : players.slice(1).map(partner => {
@@ -59,6 +65,7 @@ function chooseTeams(parties, start = 0, selected = [], count = 0) {
     const best = options.sort((a, b) => gap(a) - gap(b))[0];
     return gap(best) <= 50 ? best : null;
   }
+  // Backtrack through whole parties in queue order until a group of four passes the rating-gap check.
   for (let i = start; i < parties.length; i++) {
     const size = count + parties[i].length;
     if (size > 4) continue;
@@ -68,6 +75,7 @@ function chooseTeams(parties, start = 0, selected = [], count = 0) {
   return null;
 }
 
+// Search a bounded window of the oldest queued parties whose members are still online.
 async function tryMatch(db, playerId) {
   const { rows } = await db.query(`
     SELECT p.id, p.leader_id, a.rating, p.partner_id, b.rating AS partner_rating
@@ -83,6 +91,7 @@ async function tryMatch(db, playerId) {
   });
   const teams = chooseTeams(parties);
   if (!teams) return null;
+  // Save the teams and consume their queue entries within the same transaction.
   const { rows: [match] } = await db.query('INSERT INTO doubles_matches DEFAULT VALUES RETURNING id');
   for (const [index, team] of teams.entries()) {
     for (const player of team) {
@@ -92,9 +101,11 @@ async function tryMatch(db, playerId) {
   }
   const players = teams.flat();
   await db.query('DELETE FROM doubles_parties WHERE id = ANY($1::bigint[])', [players.map(p => p.party)]);
+  // Report an immediate match only if the player who triggered matchmaking is on one of its teams.
   return players.some(p => p.id === playerId) ? match.id : null;
 }
 
+// Treat current invitations, queued parties, and unfinished matches as mutually exclusive for each player.
 async function assertAvailable(db, ids) {
   const { rowCount } = await db.query(`
     SELECT 1 FROM doubles_parties
@@ -105,6 +116,7 @@ async function assertAvailable(db, ids) {
   if (rowCount) reject(409, 'A player is already invited, queued or in a match.');
 }
 
+// Refresh the heartbeat and let queued players trigger another matchmaking attempt through polling.
 doubles.post('/presence', async (req, res) => {
   const id = req.player.id;
   const { rows: [presence] } = await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1
@@ -114,12 +126,14 @@ doubles.post('/presence', async (req, res) => {
   res.json({ online: true, player: req.player });
 });
 
+// List other recently active players for the teammate picker.
 doubles.get('/online', async (req, res) => {
   const { rows } = await pool.query(`SELECT id, display_name, rating FROM users
     WHERE last_seen > ${onlineSince} AND id <> $1 ORDER BY display_name, id`, [req.player.id]);
   res.json(rows);
 });
 
+// Queue a one-player party and check whether it can join a balanced match immediately.
 mutation('/queue/solo', async (db, req, res) => {
   const id = req.player.id;
   await assertAvailable(db, [id]);
@@ -129,6 +143,7 @@ mutation('/queue/solo', async (db, req, res) => {
   return matchId ? { status: 'matched', matchId } : { status: 'waiting', mode: 'solo' };
 });
 
+// Clear expired invitations and reserve both players by creating a pending party.
 mutation('/invites', async (db, req, res) => {
   const id = req.player.id;
   const partner = checkId(req.body?.inviteeId);
@@ -143,6 +158,7 @@ mutation('/invites', async (db, req, res) => {
   return { status: 'invited', inviteId: invite.id };
 });
 
+// Let the invitee decline the party or queue it as a team while the inviter is still online.
 mutation('/invites/:id/respond', async (db, req) => {
   const decision = req.body?.decision;
   if (!['accept', 'decline'].includes(decision)) reject(400, 'Choose accept or decline.');
@@ -162,12 +178,14 @@ mutation('/invites/:id/respond', async (db, req) => {
   return matchId ? { status: 'matched', matchId } : { status: 'waiting', mode: 'duo' };
 });
 
+// Remove the whole queued party when either member cancels.
 mutation('/queue/cancel', async (db, req) => {
   const { rowCount } = await db.query(`DELETE FROM doubles_parties
     WHERE $1 IN (leader_id, partner_id) AND queued_at IS NOT NULL`, [req.player.id]);
   return { status: 'idle', cancelled: rowCount > 0 };
 });
 
+// Return the player's open match first. Otherwise report the queue or invitation state.
 doubles.get('/status', async (req, res) => {
   const id = req.player.id;
   const { rows: [match] } = await pool.query(`SELECT m.id, m.status, m.submitted_by,
@@ -191,12 +209,14 @@ doubles.get('/status', async (req, res) => {
   });
 });
 
+// Lock the match row before reading or changing its result state.
 async function getMatch(db, id) {
   const { rows: [match] } = await db.query('SELECT * FROM doubles_matches WHERE id = $1 FOR UPDATE', [checkId(id)]);
   if (!match) reject(404, 'Match not found.');
   return match;
 }
 
+// Translate a player's win or loss report into a proposed winning team for the opponent to review.
 mutation('/matches/:id/result', async (db, req) => {
   const result = req.body?.result;
   if (!['win', 'loss'].includes(result)) reject(400, 'Choose win or loss.');
@@ -211,6 +231,7 @@ mutation('/matches/:id/result', async (db, req) => {
   return { status: 'pending_confirmation', matchId: match.id, proposedWinningTeam: winningTeam };
 });
 
+// Let an opposing player finalize the proposed result or reopen the match for a new report.
 mutation('/matches/:id/confirm', async (db, req) => {
   const decision = req.body?.decision;
   if (!['confirm', 'dispute'].includes(decision)) reject(400, 'Choose confirm or dispute.');
@@ -230,6 +251,7 @@ mutation('/matches/:id/confirm', async (db, req) => {
   if (teamOne.length !== 2 || teamTwo.length !== 2) throw new Error('Incomplete doubles match.');
   const one = average(teamOne);
   const two = average(teamTwo);
+  // Apply Elo with team averages for expected scores and a K-factor of 32, then record each player's change.
   const ratings = [];
   for (const { id, team, rating } of players) {
     const expected = 1 / (1 + 10 ** ((team === 1 ? two - one : one - two) / 400));
@@ -244,6 +266,7 @@ mutation('/matches/:id/confirm', async (db, req) => {
   return { status: 'completed', matchId: match.id, winningTeam: match.winning_team, ratings };
 });
 
+// Return a consistent JSON error shape and log unexpected failures on the server.
 doubles.use((error, req, res, next) => {
   if (!error.status) console.error('Doubles request failed:', error);
   res.status(error.status ?? 500).json({ error: error.status ? error.message : 'Could not complete request.' });

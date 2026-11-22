@@ -1,8 +1,10 @@
 services:
   app:
     build: .
+    # Publish the development app on the host's loopback interface.
     ports:
       - "127.0.0.1:3000:3000"
+    # Connect to PostgreSQL over the Compose network using the db service name.
     environment:
       PORT: 3000
       PGHOST: db
@@ -10,6 +12,7 @@ services:
       PGUSER: badminton
       PGPASSWORD: local-development-only
       PGDATABASE: badminton_ranked
+    # Start the app once the database readiness check passes.
     depends_on:
       db:
         condition: service_healthy
@@ -20,10 +23,12 @@ services:
       POSTGRES_USER: badminton
       POSTGRES_PASSWORD: local-development-only
       POSTGRES_DB: badminton_ranked
+    # Keep data across container restarts and initialize the schema when the database volume is empty.
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
+    # Use PostgreSQL's readiness probe to gate app startup.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U badminton -d badminton_ranked"]
       interval: 5s

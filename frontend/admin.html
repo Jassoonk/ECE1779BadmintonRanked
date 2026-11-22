@@ -10,6 +10,7 @@
     integrity="sha384-yEPZ7jP9S0QKiUQ0m3jjsO4ProIW7wvR9gXkI7JOGa2XVsw53Yke2bsdkBbjmmiX"
     crossorigin="anonymous"
   >
+  <!-- Wait until the admin page markup is ready before querying its controls. -->
   <script src="/admin.js" defer></script>
 </head>
 <body class="bg-body-tertiary">
@@ -23,6 +24,7 @@
         <section class="card border-0 shadow-sm" aria-labelledby="admin-heading">
           <div class="card-body p-4">
             <h2 id="admin-heading" class="h4 mb-4">Admin sign in</h2>
+            <!-- The script enables the disabled fields once it can handle JSON form submission. -->
             <form id="admin-login-form" method="post" action="/admin/login">
               <fieldset id="admin-login-fields" disabled>
                 <label for="admin-password" class="form-label">Admin password</label>
@@ -38,6 +40,7 @@
           </div>
         </section>
 
+        <!-- Reveal these local dashboard panels after a successful password check. -->
         <div id="admin-dashboard" hidden>
           <nav class="d-flex flex-wrap gap-2 mt-4" aria-label="Admin dashboard">
             <a class="btn btn-outline-success" href="#monitoring-heading">Monitor</a>
@@ -49,6 +52,7 @@
             <div class="card-body p-4">
               <h2 id="monitoring-heading" class="h4 mb-3">Monitoring</h2>
 
+              <!-- Show app and database health independently. -->
               <dl class="mb-0">
                 <div class="d-flex justify-content-between">
                   <dt>App</dt>
@@ -65,7 +69,8 @@
           <section class="card border-0 shadow-sm mt-4" aria-labelledby="admin-matches-heading">
             <div class="card-body p-4">
               <h2 id="admin-matches-heading" class="h4 mb-2">Current matches</h2>
-              <p class="text-body-secondary mb-0">Match data isn’t connected yet.</p>
+              <!-- Placeholder for a future admin match feed. -->
+              <p class="text-body-secondary mb-0">Match data isn't connected yet.</p>
             </div>
           </section>
 
@@ -81,6 +86,7 @@
                       <th scope="col" class="text-end">Current MMR</th>
                     </tr>
                   </thead>
+                  <!-- The admin script fills this table from the leaderboard endpoint. -->
                   <tbody id="admin-players-body"></tbody>
                 </table>
               </div>
@@ -94,6 +100,7 @@
             <div class="card-body p-4">
               <h2 id="admin-invite-heading" class="h4 mb-3">Set invite code</h2>
 
+              <!-- Keep the invite code form disabled until it has a server endpoint. -->
               <fieldset disabled>
                 <label for="admin-invite-code" class="form-label">New invite code</label>
                 <input id="admin-invite-code" name="invite_code" type="text"
@@ -103,7 +110,7 @@
               </fieldset>
 
               <p class="small text-body-secondary mt-3 mb-0">
-                Invite code changes aren’t connected yet.
+                Invite code changes aren't connected yet.
               </p>
             </div>
           </section>
