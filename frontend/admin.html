@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | Badminton Ranked</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.9/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+    integrity="sha384-yEPZ7jP9S0QKiUQ0m3jjsO4ProIW7wvR9gXkI7JOGa2XVsw53Yke2bsdkBbjmmiX"
+    crossorigin="anonymous"
+  >
+  <script src="/admin.js" defer></script>
+</head>
+<body class="bg-body-tertiary">
+  <main class="container py-5">
+    <div class="row justify-content-center">
+      <div class="col-md-8 col-lg-6">
+        <header class="text-center mb-4">
+          <h1 class="fw-bold text-success">Badminton Ranked</h1>
+        </header>
+
+        <section class="card border-0 shadow-sm" aria-labelledby="admin-heading">
+          <div class="card-body p-4">
+            <h2 id="admin-heading" class="h4 mb-4">Admin sign in</h2>
+            <form id="admin-login-form" method="post" action="/admin/login">
+              <fieldset id="admin-login-fields" disabled>
+                <label for="admin-password" class="form-label">Admin password</label>
+                <input id="admin-password" name="password" type="password"
+                  class="form-control mb-3" autocomplete="current-password" required>
+                <button type="submit" class="btn btn-success w-100">Sign in</button>
+              </fieldset>
+            </form>
+            <p id="admin-login-message" class="small text-body-secondary mt-3 mb-0"
+              role="status">
+              Admin sign-in will be enabled when the server route is connected.
+            </p>
+          </div>
+        </section>
+
+        <div id="admin-dashboard" hidden>
+          <nav class="d-flex flex-wrap gap-2 mt-4" aria-label="Admin dashboard">
+            <a class="btn btn-outline-success" href="#monitoring-heading">Monitor</a>
+            <a class="btn btn-outline-success" href="#admin-matches-heading">View matches</a>
+            <a class="btn btn-outline-success" href="#admin-invite-heading">Set invite code</a>
+          </nav>
+
+          <section class="card border-0 shadow-sm mt-4" aria-labelledby="monitoring-heading">
+            <div class="card-body p-4">
+              <h2 id="monitoring-heading" class="h4 mb-3">Monitoring</h2>
+
+              <dl class="mb-0">
+                <div class="d-flex justify-content-between">
+                  <dt>App</dt>
+                  <dd id="admin-app-status" class="mb-2" role="status">Not checked</dd>
+                </div>
+                <div class="d-flex justify-content-between">
+                  <dt>Database</dt>
+                  <dd id="admin-db-status" class="mb-0" role="status">Not checked</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
+
+          <section class="card border-0 shadow-sm mt-4" aria-labelledby="admin-matches-heading">
+            <div class="card-body p-4">
+              <h2 id="admin-matches-heading" class="h4 mb-2">Current matches</h2>
+              <p class="text-body-secondary mb-0">Match data isn’t connected yet.</p>
+            </div>
+          </section>
+
+          <section class="card border-0 shadow-sm mt-4" aria-labelledby="admin-players-heading">
+            <div class="card-body p-4">
+              <h2 id="admin-players-heading" class="h4 mb-3">Players</h2>
+
+              <div class="table-responsive">
+                <table class="table table-striped align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Player</th>
+                      <th scope="col" class="text-end">Current MMR</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-players-body"></tbody>
+                </table>
+              </div>
+
+              <p id="admin-players-message" class="small text-body-secondary mt-3 mb-0"
+                role="status"></p>
+            </div>
+          </section>
+
+          <section class="card border-0 shadow-sm mt-4" aria-labelledby="admin-invite-heading">
+            <div class="card-body p-4">
+              <h2 id="admin-invite-heading" class="h4 mb-3">Set invite code</h2>
+
+              <fieldset disabled>
+                <label for="admin-invite-code" class="form-label">New invite code</label>
+                <input id="admin-invite-code" name="invite_code" type="text"
+                  class="form-control mb-3" inputmode="numeric"
+                  pattern="[0-9]{6}" maxlength="6" required>
+                <button type="button" class="btn btn-success">Save invite code</button>
+              </fieldset>
+
+              <p class="small text-body-secondary mt-3 mb-0">
+                Invite code changes aren’t connected yet.
+              </p>
+            </div>
+          </section>
+        </div>
+
+        <a class="d-inline-block link-success mt-3" href="/">Back to Badminton Ranked</a>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
