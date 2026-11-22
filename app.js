@@ -9,6 +9,26 @@ app.use(express.json());
 
 app.use(express.static('frontend'));
 
+app.get('/admin', (_req, res) => {
+  res.sendFile('admin.html', { root: 'frontend' });
+});
+
+const localAdminPassword = '123456';
+
+app.post('/admin/login', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(503).json({ error: 'Admin sign-in is unavailable.' });
+  }
+
+  if (req.body?.password !== localAdminPassword) {
+    return res.status(401).json({ error: 'Incorrect admin password.' });
+  }
+
+  return res.json({ message: 'Admin password accepted.' });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
