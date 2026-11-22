@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+﻿import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
 import { pool, checkDatabaseConnection } from './db.js';
@@ -201,6 +201,11 @@ app.get('/auth/session', async (req, res) => {
   }
 });
 
+import { createSoloRankedRouter } from './soloRanked.js';
+app.use('/solo', createSoloRankedRouter(pool));
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
 });
+
+

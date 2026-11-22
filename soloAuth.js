@@ -1,4 +1,4 @@
-﻿const { createHash } = require('node:crypto');
+﻿import { createHash } from 'node:crypto';
 
 function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -46,4 +46,5 @@ function createSoloAuth(pool) {
   };
 }
 
-module.exports = { createSoloAuth };
+export { createSoloAuth };
+
