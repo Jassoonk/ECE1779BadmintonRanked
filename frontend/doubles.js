@@ -1,126 +1,146 @@
 (() => {
-  const $ = id => document.getElementById(id);
-  const status = $('doubles-status');
-  const details = $('doubles-details');
-  const online = $('doubles-online');
-  const invites = $('doubles-invites');
-  const busyMessage = $('doubles-message');
-  let me = null;
-  let lastMatch = null;
-  let working = false;
-  let lastStatus = '';
-  const safe = value => document.createTextNode(String(value));
-  const show = (el, visible) => {el.hidden = !visible;};
-  const button = (text, action, style = 'btn-outline-success') => {
-    const b = document.createElement('button');
-    b.className = `btn ${style} btn-sm me-2 mb-2`;
-    b.type = 'button';b.textContent=text;
-    b.addEventListener('click', () => action());
-    return b;
-  };
-  const request = async (path, method='GET', body) => {
+  const byId = id => document.getElementById(id);
+  const status = byId('doubles-status');
+  const message = byId('doubles-message');
+  const actions = byId('doubles-actions');
+  const cancel = byId('doubles-cancel');
+  const invites = byId('doubles-invites');
+  const details = byId('doubles-details');
+  const duo = byId('duo-queue');
+  const picker = byId('doubles-person');
+  let lastStatus;
+  let polling;
+  let acting = false;
+
+  async function request(path, method = 'GET', body) {
     const response = await fetch(`/doubles${path}`, {
-      method, credentials:'same-origin',cache:'no-store',
-      headers: body ? {'Content-Type':'application/json'} : {},
-      body: body ? JSON.stringify(body) : undefined
+      method, cache: 'no-store',
+      headers: body && { 'Content-Type': 'application/json' },
+      body: body && JSON.stringify(body)
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!response.ok) throw Object.assign(new Error(data.error), { status: response.status });
     return data;
-  };
-  async function act(path,body) {
-    if (working) return;
-    working=true;
+  }
+
+  async function act(path, body) {
+    if (acting) return;
+    acting = true;
     try {
-      const result=await request(path,'POST',body);
-      busyMessage.textContent=JSON.stringify(result);
+      await polling;
+      await request(path, 'POST', body);
+      message.textContent = '';
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
       await refresh();
-      if(result.status==='completed') {
-        const leaderboardReload = typeof loadLeaderboard === 'function' ? loadLeaderboard : null;
-        if(leaderboardReload) leaderboardReload();
-      }
-    } catch(e) {busyMessage.textContent=e.message;}
-    finally {working=false;}
+      acting = false;
+    }
   }
-  function renderMatch(match) {
-    details.replaceChildren();
-    const heading=document.createElement('h3');heading.className='h6';heading.textContent=`Match #${match.id} · ${match.status}`;
+
+  function button(label, style, path, body) {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.className = `btn btn-sm me-2 mb-2 btn-${style}`;
+    element.textContent = label;
+    element.addEventListener('click', () => act(path, body));
+    return element;
+  }
+
+  function renderMatch(match, player) {
+    const heading = document.createElement('h3');
+    heading.className = 'h6';
+    heading.textContent = `Match #${match.id}`;
     details.append(heading);
-    for(const team of [1,2]) {
-      const p=document.createElement('p');p.className='mb-2';
-      p.append(safe(`Team ${team}: `));
-      p.append(safe(match.players.filter(x=>x.team===team).map(p=>`${p.name} (${p.rating})`).join(' + ')));
-      details.append(p);
+    for (const team of [1, 2]) {
+      const line = document.createElement('p');
+      const names = match.players.filter(p => p.team === team).map(p => `${p.name} (${p.rating})`);
+      line.textContent = `Team ${team}: ${names.join(' + ')}`;
+      details.append(line);
     }
-    const myself=match.players.find(p=>String(p.id)===String(me.id));
-    const submitter=match.players.find(p=>String(p.id)===String(match.submitted_by));
-    if(match.status==='active') {
-      details.append(button('I Won',()=>act(`/matches/${match.id}/result`,{result:'win'}),'btn-success'));
-      details.append(button('I Lost',()=>act(`/matches/${match.id}/result`,{result:'loss'}),'btn-outline-secondary'));
-    } else if(match.status==='pending_confirmation') {
-      const p=document.createElement('p');
-      p.textContent=`Reported winner: Team ${match.proposed_winning_team}. Waiting for opposing team confirmation.`;
-      details.append(p);
-      if (submitter && myself && submitter.team !== myself.team) {
-        details.append(button('Confirm result',()=>act(`/matches/${match.id}/confirm`,{decision:'confirm'}),'btn-success'));
-        details.append(button('Dispute result',()=>act(`/matches/${match.id}/confirm`,{decision:'dispute'}),'btn-outline-danger'));
-      }
+    const path = `/matches/${match.id}`;
+    if (match.status === 'active') {
+      details.append(button('I Won', 'success', path + '/result', { result: 'win' }),
+        button('I Lost', 'outline-secondary', path + '/result', { result: 'loss' }));
+      return;
     }
-  }
-  function renderInviteList(items) {
-    invites.replaceChildren();
-    if(!items.length) return;
-    const title=document.createElement('p');title.className='mb-1';title.textContent='Duo invitations:';invites.append(title);
-    for(const item of items) {
-      const line=document.createElement('div');line.className='mb-2';
-      line.append(safe(`${item.inviter_name} invited you. `));
-      line.append(button('Accept',()=>act(`/invites/${item.id}/respond`,{decision:'accept'}),'btn-success'));
-      line.append(button('Decline',()=>act(`/invites/${item.id}/respond`,{decision:'decline'}),'btn-outline-danger'));
-      invites.append(line);
+    const text = document.createElement('p');
+    text.textContent = `Reported winner: Team ${match.proposed_winning_team}. Waiting for the opposing team.`;
+    details.append(text);
+    const teamOf = id => match.players.find(p => String(p.id) === String(id)).team;
+    if (teamOf(player.id) !== teamOf(match.submitted_by)) {
+      details.append(button('Confirm result', 'success', path + '/confirm', { decision: 'confirm' }),
+        button('Dispute result', 'outline-danger', path + '/confirm', { decision: 'dispute' }));
     }
   }
-  async function refresh() {
+
+  async function update() {
     try {
-      const session=await fetch('/auth/session',{credentials:'same-origin',cache:'no-store'});
-      if (!session.ok) {
-        me=null;status.textContent='Sign in to join a ranked doubles match.';
-        show($('doubles-actions'),false);details.replaceChildren();online.replaceChildren();invites.replaceChildren();return;
+      const { player } = await request('/presence', 'POST');
+      const data = await request('/status');
+      const incoming = data.invitations?.[0];
+      const outgoing = data.outgoing?.[0];
+      actions.hidden = data.status !== 'idle' || Boolean(incoming || outgoing);
+      cancel.hidden = data.status !== 'waiting';
+      if (actions.hidden) duo.open = false;
+      invites.replaceChildren();
+      details.replaceChildren();
+
+      if (data.match) {
+        status.textContent = 'Match found!';
+        renderMatch(data.match, player);
+      } else if (data.status === 'waiting') {
+        status.textContent = `Searching for opponents (${data.mode})...`;
+      } else if (incoming) {
+        status.textContent = `${incoming.inviter_name} invited you to play doubles.`;
+        const path = `/invites/${incoming.id}/respond`;
+        invites.append(button('Accept', 'success', path, { decision: 'accept' }),
+          button('Decline', 'outline-danger', path, { decision: 'decline' }));
+      } else if (outgoing) {
+        status.textContent = `Invitation sent to ${outgoing.invitee_name}. Waiting for acceptance.`;
+      } else {
+        status.textContent = 'Ready to play doubles.';
       }
-      me=await session.json();
-      await request('/presence','POST');
-      const data=await request('/status');
-      status.textContent=data.status==='matched' ? 'Match found!' :
-        data.status==='waiting' ? `Searching for opponents (${data.mode})...` :
-        (data.outgoing?.length ? `Invitation sent to ${data.outgoing[0].invitee_name}, awaiting acceptance.` : 'Ready to play doubles.');
-      show($('doubles-actions'),data.status==='idle' && !(data.outgoing?.length));
-      show($('doubles-cancel'),data.status==='waiting');
-      if (data.match) renderMatch(data.match);else details.replaceChildren();
-      renderInviteList(data.invitations||[]);
-      if (data.status==='idle' && !(data.outgoing?.length)) {
-        const people=await request('/online');
-        online.replaceChildren();
-        const choose=document.createElement('select');choose.className='form-select mb-2';choose.id='doubles-person';
-        const initial=document.createElement('option');initial.value='';initial.textContent='Choose an online teammate';choose.append(initial);
-        for(const player of people){const op=document.createElement('option');op.value=player.id;op.textContent=`${player.display_name} (${player.rating})`;choose.append(op);}
-        online.append(choose);
-        online.append(button('Invite to Duo Queue',()=>{
-          if(choose.value) act('/invites',{inviteeId:choose.value});
-          else busyMessage.textContent='Choose an online teammate first.';
-        }));
-      } else online.replaceChildren();
-      if(data.status!==lastStatus && data.status==='matched') {
-        busyMessage.textContent='All four players matched. Play your doubles game!';
+      if (lastStatus === 'matched' && data.status === 'idle') {
+        message.textContent = 'Match complete. Rankings refreshed.';
+        loadLeaderboard();
+        const session = await fetch('/auth/session', { cache: 'no-store' });
+        if (session.ok) showSignedIn(await session.json());
       }
-      if(lastStatus==='matched' && data.status==='idle') {
-        busyMessage.textContent='Your previous match is complete. Rankings have been refreshed.';
-        if(typeof loadLeaderboard === 'function') loadLeaderboard();
-        const message=document.getElementById('sign-in-message');
-        if(message && me) message.textContent=`Signed in as ${me.display_name}. Rating: ${me.rating}.`;
+      lastStatus = data.status;
+      if (duo.open && !actions.hidden) {
+        const people = await request('/online');
+        const selected = picker.value;
+        picker.replaceChildren(new Option('Choose an online teammate', ''));
+        for (const p of people) picker.add(new Option(`${p.display_name} (${p.rating})`, p.id));
+        picker.value = people.some(p => p.id === selected) ? selected : '';
       }
-      lastStatus=data.status;
-    } catch(e) {status.textContent=`Could not load queue: ${e.message}`;}
+    } catch (error) {
+      if (error.status !== 401) {
+        status.textContent = `Could not load queue: ${error.message}`;
+        return;
+      }
+      actions.hidden = cancel.hidden = true;
+      duo.open = false;
+      invites.replaceChildren();
+      details.replaceChildren();
+      message.textContent = '';
+      lastStatus = undefined;
+      status.textContent = 'Sign in to join a ranked doubles match.';
+    }
   }
-  $('doubles-solo').addEventListener('click',()=>act('/queue/solo'));
-  $('doubles-cancel').addEventListener('click',()=>act('/queue/cancel'));
-  refresh();setInterval(refresh,10000);
+
+  function refresh() {
+    polling ??= update().finally(() => { polling = null; });
+    return polling;
+  }
+  byId('doubles-solo').addEventListener('click', () => act('/queue/solo'));
+  cancel.addEventListener('click', () => act('/queue/cancel'));
+  byId('doubles-invite').addEventListener('click', () => {
+    if (picker.value) act('/invites', { inviteeId: picker.value });
+    else message.textContent = 'Choose an online teammate first.';
+  });
+  duo.addEventListener('toggle', () => { if (duo.open && !acting) refresh(); });
+  setInterval(() => { if (!acting) refresh(); }, 10000);
+  refresh();
 })();

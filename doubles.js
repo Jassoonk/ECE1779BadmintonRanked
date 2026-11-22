@@ -1,276 +1,250 @@
 import express from 'express';
+import { pool } from './db.js';
 
-const MATCH_GAP = 50;  // maximum difference between the two teams' average rating
-const K = 32;          // Elo update factor
-const ACTIVE_WINDOW = '45 seconds';
-const lockSQL = 'SELECT pg_advisory_xact_lock(1779, 2)';
-const idStr = value => String(value);
+export const doubles = express.Router();
+const onlineSince = "NOW() - INTERVAL '45 seconds'";
+const inviteSince = "NOW() - INTERVAL '3 minutes'";
 
-function teamRating(players) {
-  return players.reduce((sum, p) => sum + Number(p.rating), 0) / 2;
-}
-function elo(before, ownAverage, otherAverage, won) {
-  const expected = 1 / (1 + 10 ** ((otherAverage - ownAverage) / 400));
-  return Math.max(0, Math.round(before + K * ((won ? 1 : 0) - expected)));
+function reject(status, message) {
+  throw Object.assign(new Error(message), { status });
 }
 
-// Look at the earliest waiting parties. A duo always stays on the same team.
-function chooseTeams(parties) {
-  const waiting = parties.slice(0, 12);
-  let found = null;
-  function pick(start, selected, size) {
-    if (found) return;
-    if (size === 4) {
-      const duos = selected.filter(p => p.players.length === 2);
-      const singles = selected.filter(p => p.players.length === 1).flatMap(p => p.players);
-      let options = [];
-      if (duos.length === 2) options = [[duos[0].players, duos[1].players]];
-      else if (duos.length === 1 && singles.length === 2) options = [[duos[0].players, singles]];
-      else if (singles.length === 4) {
-        const [a,b,c,d] = singles;
-        options = [[[a,b],[c,d]], [[a,c],[b,d]], [[a,d],[b,c]]];
-      }
-      options.sort((x,y) => Math.abs(teamRating(x[0])-teamRating(x[1])) - Math.abs(teamRating(y[0])-teamRating(y[1])));
-      for (const [team1, team2] of options) {
-        if (Math.abs(teamRating(team1) - teamRating(team2)) <= MATCH_GAP) {
-          found = { team1, team2 };
-          break;
-        }
-      }
-      return;
-    }
-    for (let i = start; i < waiting.length; i++) {
-      const party = waiting[i];
-      if (size + party.players.length <= 4) pick(i+1, [...selected,party], size+party.players.length);
-      if (found) return;
-    }
+function checkId(value) {
+  const id = String(value ?? '');
+  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
+    reject(400, 'Invalid player, invitation or match ID.');
   }
-  pick(0, [], 0);
-  return found;
+  return id;
 }
 
-export function createDoublesRouter(pool, requireSession) {
-  const router = express.Router();
-  router.use(requireSession);
-  router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-
-  async function transaction(work) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(lockSQL);
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally { client.release(); }
+// Serialize lobby and result changes across app instances. Send the reply after commit.
+async function transaction(work) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    await db.query('SELECT pg_advisory_xact_lock(1779, 2)');
+    const result = await work(db);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
   }
-  function replyError(res, error) {
-    console.error('2v2 API error:', error.code ?? error.message);
-    return res.status(error.httpStatus ?? 500).json({ error: error.publicMessage ?? 'Could not complete request.' });
-  }
-  function reject(message, httpStatus = 409) {
-    throw Object.assign(new Error(message), { publicMessage: message, httpStatus });
-  }
-  async function assertAvailable(c, userId) {
-    const existing = await c.query(
-      `SELECT 1 FROM doubles_queue WHERE user_id=$1 UNION ALL
-       SELECT 1 FROM doubles_match_players WHERE user_id=$1 AND active LIMIT 1`, [userId]);
-    if (existing.rowCount) reject('Player is already queued or in an active match.');
-  }
-  async function tryMatch(c) {
-    // Only freshly active users are eligible for a new match.
-    const rows = (await c.query(
-      `SELECT q.user_id, q.party_id, q.party_size, q.joined_at, u.rating,
-              u.display_name FROM doubles_queue q
-       JOIN users u ON u.id=q.user_id
-       JOIN doubles_presence p ON p.user_id=q.user_id
-       WHERE p.last_seen > NOW() - INTERVAL '${ACTIVE_WINDOW}'
-       ORDER BY q.joined_at, q.user_id LIMIT 60`)).rows;
-    const grouped = new Map();
-    for (const row of rows) {
-      const key = idStr(row.party_id);
-      if (!grouped.has(key)) grouped.set(key, { expected: row.party_size, joined: new Date(row.joined_at).getTime(), players: [] });
-      grouped.get(key).players.push({ id: idStr(row.user_id), name: row.display_name, rating: Number(row.rating) });
-    }
-    const parties = [...grouped.values()].filter(p => p.players.length === p.expected).sort((a,b) => a.joined-b.joined);
-    const found = chooseTeams(parties);
-    if (!found) return null;
-    const match = (await c.query('INSERT INTO doubles_matches DEFAULT VALUES RETURNING id')).rows[0];
-    for (const [teamIndex, team] of [[1, found.team1], [2, found.team2]]) {
-      for (const p of team) await c.query(
-        'INSERT INTO doubles_match_players (match_id,user_id,team,rating_before) VALUES ($1,$2,$3,$4)',
-        [match.id, p.id, teamIndex, p.rating]);
-    }
-    const ids = [...found.team1, ...found.team2].map(p => p.id);
-    await c.query('DELETE FROM doubles_queue WHERE user_id = ANY($1::bigint[])', [ids]);
-    return match.id;
-  }
-
-  router.post('/presence', async (req, res) => {
-    try {
-      await pool.query(`INSERT INTO doubles_presence(user_id,last_seen) VALUES($1,NOW())
-        ON CONFLICT(user_id) DO UPDATE SET last_seen=NOW()`, [req.soloUser.id]);
-      res.json({ online: true });
-    } catch (e) { replyError(res,e); }
-  });
-  router.get('/online', async (req, res) => {
-    try {
-      const result = await pool.query(
-        `SELECT u.id, u.display_name, u.rating FROM doubles_presence p
-         JOIN users u ON u.id=p.user_id
-         WHERE p.last_seen > NOW() - INTERVAL '${ACTIVE_WINDOW}' AND u.id <> $1
-         ORDER BY u.display_name`, [req.soloUser.id]);
-      res.json(result.rows);
-    } catch (e) { replyError(res,e); }
-  });
-  router.post('/queue/solo', async (req, res) => {
-    try {
-      const result = await transaction(async c => {
-        const id = req.soloUser.id;
-        await assertAvailable(c,id);
-        const party = (await c.query("SELECT nextval('doubles_party_id_seq') AS id")).rows[0].id;
-        await c.query('INSERT INTO doubles_queue(user_id,party_id,party_size) VALUES($1,$2,1)',[id,party]);
-        const matchId = await tryMatch(c);
-        return matchId ? { status:'matched',matchId } : { status:'waiting',mode:'solo' };
-      });
-      res.status(result.matchId ? 201 : 200).json(result);
-    } catch(e) { replyError(res,e); }
-  });
-  router.post('/invites', async (req,res) => {
-    const invitee = req.body?.inviteeId;
-    if (!/^\d+$/.test(String(invitee ?? '')) || String(invitee) === idStr(req.soloUser.id)) return res.status(400).json({error:'Choose another player.'});
-    try {
-      const result = await transaction(async c => {
-        await assertAvailable(c,req.soloUser.id);
-        await assertAvailable(c,invitee);
-        const online = await c.query(`SELECT 1 FROM doubles_presence
-          WHERE user_id=$1 AND last_seen > NOW() - INTERVAL '${ACTIVE_WINDOW}'`,[invitee]);
-        if (!online.rowCount) reject('Invited player is not online.');
-        const exists = await c.query(`SELECT 1 FROM doubles_invites
-          WHERE status='pending' AND expires_at>NOW() AND
-          (inviter_id=$1 OR invitee_id=$1 OR inviter_id=$2 OR invitee_id=$2) LIMIT 1`,[req.soloUser.id,invitee]);
-        if (exists.rowCount) reject('One of the players has a pending invitation.');
-        return (await c.query('INSERT INTO doubles_invites(inviter_id,invitee_id) VALUES($1,$2) RETURNING id',[req.soloUser.id,invitee])).rows[0];
-      });
-      res.status(201).json({ status:'invited',inviteId:result.id });
-    } catch(e) { replyError(res,e); }
-  });
-  router.post('/invites/:id/respond', async (req,res) => {
-    if (!/^\d+$/.test(req.params.id) || !['accept','decline'].includes(req.body?.decision)) return res.status(400).json({error:'Invalid invitation or decision.'});
-    try {
-      const result = await transaction(async c => {
-        const result = await c.query('SELECT * FROM doubles_invites WHERE id=$1 FOR UPDATE',[req.params.id]);
-        const invite = result.rows[0];
-        if (!invite) reject('Invitation not found.',404);
-        if (idStr(invite.invitee_id)!==idStr(req.soloUser.id)) reject('Not your invitation.',403);
-        if (invite.status !== 'pending' || new Date(invite.expires_at) <= new Date()) reject('Invitation expired or already handled.');
-        if (req.body.decision === 'decline') {
-          await c.query("UPDATE doubles_invites SET status='declined' WHERE id=$1",[invite.id]);
-          return {status:'declined'};
-        }
-        await assertAvailable(c,invite.inviter_id);
-        await assertAvailable(c,invite.invitee_id);
-        const online = await c.query(`SELECT 1 FROM doubles_presence WHERE user_id=$1
-          AND last_seen > NOW() - INTERVAL '${ACTIVE_WINDOW}'`,[invite.inviter_id]);
-        if (!online.rowCount) reject('Inviter is no longer online.');
-        await c.query("UPDATE doubles_invites SET status='accepted' WHERE id=$1",[invite.id]);
-        const party=(await c.query("SELECT nextval('doubles_party_id_seq') AS id")).rows[0].id;
-        for (const uid of [invite.inviter_id,invite.invitee_id]) await c.query(
-          'INSERT INTO doubles_queue(user_id,party_id,party_size) VALUES($1,$2,2)',[uid,party]);
-        const matchId=await tryMatch(c);
-        return matchId ? {status:'matched', matchId} : {status:'waiting',mode:'duo'};
-      });
-      res.json(result);
-    } catch(e) { replyError(res,e); }
-  });
-  router.post('/queue/cancel', async (req,res) => {
-    try {
-      const result=await transaction(async c => {
-        const row=(await c.query('SELECT party_id FROM doubles_queue WHERE user_id=$1',[req.soloUser.id])).rows[0];
-        if (!row) return {status:'idle',cancelled:false};
-        await c.query('DELETE FROM doubles_queue WHERE party_id=$1',[row.party_id]);
-        return {status:'idle',cancelled:true};
-      });
-      res.json(result);
-    } catch(e) { replyError(res,e); }
-  });
-  router.get('/status', async (req,res) => {
-    try {
-      const me=req.soloUser.id;
-      const match=await pool.query(`SELECT m.id, m.status, m.submitted_by, m.proposed_winning_team,
-        json_agg(json_build_object('id',mp.user_id,'name',u.display_name,'team',mp.team,'rating',u.rating)
-        ORDER BY mp.team,mp.user_id) AS players
-        FROM doubles_matches m JOIN doubles_match_players my ON my.match_id=m.id AND my.user_id=$1
-        JOIN doubles_match_players mp ON mp.match_id=m.id JOIN users u ON u.id=mp.user_id
-        WHERE my.active AND m.status IN ('active','pending_confirmation')
-        GROUP BY m.id ORDER BY m.created_at DESC LIMIT 1`,[me]);
-      if(match.rowCount) return res.json({status:'matched',match:match.rows[0]});
-      const q=await pool.query('SELECT party_size FROM doubles_queue WHERE user_id=$1',[me]);
-      const pending=await pool.query(`SELECT i.id, i.inviter_id, u.display_name AS inviter_name
-        FROM doubles_invites i JOIN users u ON u.id=i.inviter_id
-        WHERE i.invitee_id=$1 AND i.status='pending' AND i.expires_at>NOW()
-        ORDER BY i.created_at DESC`,[me]);
-      const outgoing=await pool.query(`SELECT i.id, u.display_name AS invitee_name
-        FROM doubles_invites i JOIN users u ON u.id=i.invitee_id
-        WHERE i.inviter_id=$1 AND i.status='pending' AND i.expires_at>NOW()`,[me]);
-      res.json({status:q.rowCount?'waiting':'idle', mode:q.rows[0]?.party_size===2?'duo':q.rowCount?'solo':null,
-        invitations:pending.rows,outgoing:outgoing.rows});
-    } catch(e) { replyError(res,e); }
-  });
-  router.post('/matches/:id/result', async(req,res)=>{
-    if(!/^\d+$/.test(req.params.id) || !['win','loss'].includes(req.body?.result)) return res.status(400).json({error:'Invalid match or result.'});
-    try {
-      const result=await transaction(async c=>{
-        const m=(await c.query('SELECT * FROM doubles_matches WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
-        if(!m) reject('Match not found.',404);
-        if(m.status!=='active') reject('Result already submitted or completed.');
-        const own=(await c.query('SELECT team FROM doubles_match_players WHERE match_id=$1 AND user_id=$2',[m.id,req.soloUser.id])).rows[0];
-        if(!own) reject('Not your match.',403);
-        const winningTeam=req.body.result==='win'?Number(own.team):3-Number(own.team);
-        await c.query(`UPDATE doubles_matches SET status='pending_confirmation', submitted_by=$2,
-          proposed_winning_team=$3 WHERE id=$1`,[m.id,req.soloUser.id,winningTeam]);
-        return {status:'pending_confirmation',matchId:m.id,proposedWinningTeam:winningTeam};
-      });
-      res.json(result);
-    } catch(e) {replyError(res,e);}
-  });
-  router.post('/matches/:id/confirm', async(req,res)=>{
-    if(!/^\d+$/.test(req.params.id) || !['confirm','dispute'].includes(req.body?.decision)) return res.status(400).json({error:'Invalid match or decision.'});
-    try {
-      const result=await transaction(async c=>{
-        const m=(await c.query('SELECT * FROM doubles_matches WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
-        if(!m) reject('Match not found.',404);
-        if(m.status!=='pending_confirmation') reject('Match is not awaiting confirmation.');
-        const players=(await c.query(`SELECT mp.user_id,mp.team,u.rating FROM doubles_match_players mp
-          JOIN users u ON u.id=mp.user_id WHERE mp.match_id=$1 ORDER BY mp.user_id FOR UPDATE OF u`,[m.id])).rows;
-        const submitter=players.find(p=>idStr(p.user_id)===idStr(m.submitted_by));
-        const confirmer=players.find(p=>idStr(p.user_id)===idStr(req.soloUser.id));
-        if(!confirmer) reject('Not your match.',403);
-        if(submitter && confirmer.team===submitter.team) reject('Only someone on the opposing team may confirm.',403);
-        if(req.body.decision==='dispute') {
-          await c.query(`UPDATE doubles_matches SET status='active',submitted_by=NULL,
-            proposed_winning_team=NULL WHERE id=$1`,[m.id]);
-          return {status:'active',disputed:true};
-        }
-        const t1=players.filter(p=>p.team===1), t2=players.filter(p=>p.team===2);
-        if(t1.length!==2 || t2.length!==2) throw new Error('Expected two players on each team.');
-        const a=teamRating(t1),b=teamRating(t2);
-        const changes=[];
-        for(const p of players){
-          const after=elo(p.rating,p.team===1?a:b,p.team===1?b:a,p.team===m.proposed_winning_team);
-          await c.query('UPDATE users SET rating=$2 WHERE id=$1',[p.user_id,after]);
-          await c.query('INSERT INTO doubles_rating_history(match_id,user_id,rating_before,rating_after) VALUES($1,$2,$3,$4)',[m.id,p.user_id,p.rating,after]);
-          changes.push({id:p.user_id,before:p.rating,after,change:after-p.rating});
-        }
-        await c.query('UPDATE doubles_match_players SET active=FALSE WHERE match_id=$1',[m.id]);
-        await c.query("UPDATE doubles_matches SET status='completed',winning_team=$2,completed_at=NOW() WHERE id=$1",[m.id,m.proposed_winning_team]);
-        return {status:'completed',matchId:m.id,winningTeam:m.proposed_winning_team,ratings:changes};
-      });
-      res.json(result);
-    } catch(e) {replyError(res,e);}
-  });
-  return router;
 }
+
+function mutation(path, work) {
+  doubles.post(path, async (req, res) => {
+    res.json(await transaction(db => work(db, req, res)));
+  });
+}
+
+function average(team) {
+  return (team[0].rating + team[1].rating) / 2;
+}
+
+// Try the oldest eligible parties first. A duo is always a complete team.
+function chooseTeams(parties, start = 0, selected = [], count = 0) {
+  if (count === 4) {
+    const duo = selected.find(party => party.length === 2);
+    const players = selected.flat();
+    const options = duo
+      ? [[duo, players.filter(player => !duo.includes(player))]]
+      : players.slice(1).map(partner => {
+          const team = [players[0], partner];
+          return [team, players.filter(player => !team.includes(player))];
+        });
+    const gap = ([one, two]) => Math.abs(average(one) - average(two));
+    const best = options.sort((a, b) => gap(a) - gap(b))[0];
+    return gap(best) <= 50 ? best : null;
+  }
+  for (let i = start; i < parties.length; i++) {
+    const size = count + parties[i].length;
+    if (size > 4) continue;
+    const teams = chooseTeams(parties, i + 1, [...selected, parties[i]], size);
+    if (teams) return teams;
+  }
+  return null;
+}
+
+async function tryMatch(db, playerId) {
+  const { rows } = await db.query(`
+    SELECT p.id, p.leader_id, a.rating, p.partner_id, b.rating AS partner_rating
+    FROM doubles_parties p JOIN users a ON a.id = p.leader_id
+    LEFT JOIN users b ON b.id = p.partner_id
+    WHERE p.queued_at IS NOT NULL AND a.last_seen > ${onlineSince}
+      AND (p.partner_id IS NULL OR b.last_seen > ${onlineSince})
+    ORDER BY p.queued_at, p.id LIMIT 12`);
+  const parties = rows.map(row => {
+    const party = [{ id: row.leader_id, rating: row.rating, party: row.id }];
+    if (row.partner_id) party.push({ id: row.partner_id, rating: row.partner_rating, party: row.id });
+    return party;
+  });
+  const teams = chooseTeams(parties);
+  if (!teams) return null;
+  const { rows: [match] } = await db.query('INSERT INTO doubles_matches DEFAULT VALUES RETURNING id');
+  for (const [index, team] of teams.entries()) {
+    for (const player of team) {
+      await db.query('INSERT INTO doubles_match_players (match_id, user_id, team, rating_before) VALUES ($1,$2,$3,$4)',
+        [match.id, player.id, index + 1, player.rating]);
+    }
+  }
+  const players = teams.flat();
+  await db.query('DELETE FROM doubles_parties WHERE id = ANY($1::bigint[])', [players.map(p => p.party)]);
+  return players.some(p => p.id === playerId) ? match.id : null;
+}
+
+async function assertAvailable(db, ids) {
+  const { rowCount } = await db.query(`
+    SELECT 1 FROM doubles_parties
+    WHERE (leader_id = ANY($1) OR partner_id = ANY($1))
+      AND (queued_at IS NOT NULL OR created_at > ${inviteSince})
+    UNION ALL SELECT 1 FROM doubles_match_players WHERE user_id = ANY($1) AND rating_after IS NULL
+    LIMIT 1`, [ids]);
+  if (rowCount) reject(409, 'A player is already invited, queued or in a match.');
+}
+
+doubles.post('/presence', async (req, res) => {
+  const id = req.player.id;
+  const { rows: [presence] } = await pool.query(`UPDATE users SET last_seen = NOW() WHERE id = $1
+    RETURNING EXISTS (SELECT 1 FROM doubles_parties WHERE $1 IN (leader_id, partner_id)
+      AND queued_at IS NOT NULL) AS queued`, [id]);
+  if (presence.queued) await transaction(db => tryMatch(db, id));
+  res.json({ online: true, player: req.player });
+});
+
+doubles.get('/online', async (req, res) => {
+  const { rows } = await pool.query(`SELECT id, display_name, rating FROM users
+    WHERE last_seen > ${onlineSince} AND id <> $1 ORDER BY display_name, id`, [req.player.id]);
+  res.json(rows);
+});
+
+mutation('/queue/solo', async (db, req, res) => {
+  const id = req.player.id;
+  await assertAvailable(db, [id]);
+  await db.query('INSERT INTO doubles_parties (leader_id, queued_at) VALUES ($1, NOW())', [id]);
+  const matchId = await tryMatch(db, id);
+  if (matchId) res.status(201);
+  return matchId ? { status: 'matched', matchId } : { status: 'waiting', mode: 'solo' };
+});
+
+mutation('/invites', async (db, req, res) => {
+  const id = req.player.id;
+  const partner = checkId(req.body?.inviteeId);
+  if (partner === id) reject(400, 'Choose another player.');
+  await db.query(`DELETE FROM doubles_parties WHERE queued_at IS NULL AND created_at <= ${inviteSince}`);
+  await assertAvailable(db, [id, partner]);
+  const online = await db.query(`SELECT 1 FROM users WHERE id = $1 AND last_seen > ${onlineSince}`, [partner]);
+  if (!online.rowCount) reject(409, 'Invited player is not online.');
+  const { rows: [invite] } = await db.query(
+    'INSERT INTO doubles_parties (leader_id, partner_id) VALUES ($1,$2) RETURNING id', [id, partner]);
+  res.status(201);
+  return { status: 'invited', inviteId: invite.id };
+});
+
+mutation('/invites/:id/respond', async (db, req) => {
+  const decision = req.body?.decision;
+  if (!['accept', 'decline'].includes(decision)) reject(400, 'Choose accept or decline.');
+  const { rows: [invite] } = await db.query(`SELECT p.*, p.created_at > ${inviteSince} AS valid,
+    u.last_seen > ${onlineSince} AS online FROM doubles_parties p JOIN users u ON u.id = p.leader_id
+    WHERE p.id = $1`, [checkId(req.params.id)]);
+  if (!invite) reject(404, 'Invitation not found.');
+  if (invite.partner_id !== req.player.id) reject(403, 'Not your invitation.');
+  if (invite.queued_at || !invite.valid) reject(409, 'Invitation expired or already handled.');
+  if (decision === 'decline') {
+    await db.query('DELETE FROM doubles_parties WHERE id = $1', [invite.id]);
+    return { status: 'declined' };
+  }
+  if (!invite.online) reject(409, 'Inviter is no longer online.');
+  await db.query('UPDATE doubles_parties SET queued_at = NOW() WHERE id = $1', [invite.id]);
+  const matchId = await tryMatch(db, req.player.id);
+  return matchId ? { status: 'matched', matchId } : { status: 'waiting', mode: 'duo' };
+});
+
+mutation('/queue/cancel', async (db, req) => {
+  const { rowCount } = await db.query(`DELETE FROM doubles_parties
+    WHERE $1 IN (leader_id, partner_id) AND queued_at IS NOT NULL`, [req.player.id]);
+  return { status: 'idle', cancelled: rowCount > 0 };
+});
+
+doubles.get('/status', async (req, res) => {
+  const id = req.player.id;
+  const { rows: [match] } = await pool.query(`SELECT m.id, m.status, m.submitted_by,
+    m.winning_team AS proposed_winning_team,
+    json_agg(json_build_object('id', p.user_id, 'name', u.display_name, 'team', p.team, 'rating', u.rating)
+      ORDER BY p.team, p.user_id) AS players
+    FROM doubles_match_players mine JOIN doubles_matches m ON m.id = mine.match_id
+    JOIN doubles_match_players p ON p.match_id = m.id JOIN users u ON u.id = p.user_id
+    WHERE mine.user_id = $1 AND mine.rating_after IS NULL GROUP BY m.id`, [id]);
+  if (match) return res.json({ status: 'matched', match });
+  const { rows: [party] } = await pool.query(`SELECT p.*, a.display_name AS inviter_name, b.display_name AS invitee_name
+    FROM doubles_parties p JOIN users a ON a.id = p.leader_id LEFT JOIN users b ON b.id = p.partner_id
+    WHERE $1 IN (p.leader_id, p.partner_id) AND (p.queued_at IS NOT NULL OR p.created_at > ${inviteSince})`, [id]);
+  const waiting = Boolean(party?.queued_at);
+  res.json({
+    status: waiting ? 'waiting' : 'idle',
+    mode: waiting ? (party.partner_id ? 'duo' : 'solo') : null,
+    invitations: !waiting && party?.partner_id === id
+      ? [{ id: party.id, inviter_id: party.leader_id, inviter_name: party.inviter_name }] : [],
+    outgoing: !waiting && party?.leader_id === id ? [{ id: party.id, invitee_name: party.invitee_name }] : []
+  });
+});
+
+async function getMatch(db, id) {
+  const { rows: [match] } = await db.query('SELECT * FROM doubles_matches WHERE id = $1 FOR UPDATE', [checkId(id)]);
+  if (!match) reject(404, 'Match not found.');
+  return match;
+}
+
+mutation('/matches/:id/result', async (db, req) => {
+  const result = req.body?.result;
+  if (!['win', 'loss'].includes(result)) reject(400, 'Choose win or loss.');
+  const match = await getMatch(db, req.params.id);
+  const { rows: [player] } = await db.query('SELECT team FROM doubles_match_players WHERE match_id = $1 AND user_id = $2',
+    [match.id, req.player.id]);
+  if (!player) reject(403, 'Not your match.');
+  if (match.status !== 'active') reject(409, 'Result already submitted or completed.');
+  const winningTeam = result === 'win' ? player.team : 3 - player.team;
+  await db.query(`UPDATE doubles_matches SET status = 'pending_confirmation', submitted_by = $2, winning_team = $3
+    WHERE id = $1`, [match.id, req.player.id, winningTeam]);
+  return { status: 'pending_confirmation', matchId: match.id, proposedWinningTeam: winningTeam };
+});
+
+mutation('/matches/:id/confirm', async (db, req) => {
+  const decision = req.body?.decision;
+  if (!['confirm', 'dispute'].includes(decision)) reject(400, 'Choose confirm or dispute.');
+  const match = await getMatch(db, req.params.id);
+  if (match.status !== 'pending_confirmation') reject(409, 'Match is not awaiting confirmation.');
+  const { rows: players } = await db.query(`SELECT u.id, p.team, u.rating FROM doubles_match_players p
+    JOIN users u ON u.id = p.user_id WHERE p.match_id = $1 ORDER BY u.id FOR UPDATE OF u`, [match.id]);
+  const confirmer = players.find(p => p.id === req.player.id);
+  const submitter = players.find(p => p.id === match.submitted_by);
+  if (!confirmer || confirmer.team === submitter.team) reject(403, 'Only an opposing player can review this result.');
+  if (decision === 'dispute') {
+    await db.query("UPDATE doubles_matches SET status = 'active', submitted_by = NULL, winning_team = NULL WHERE id = $1", [match.id]);
+    return { status: 'active', disputed: true };
+  }
+  const teamOne = players.filter(p => p.team === 1);
+  const teamTwo = players.filter(p => p.team === 2);
+  if (teamOne.length !== 2 || teamTwo.length !== 2) throw new Error('Incomplete doubles match.');
+  const one = average(teamOne);
+  const two = average(teamTwo);
+  const ratings = [];
+  for (const { id, team, rating } of players) {
+    const expected = 1 / (1 + 10 ** ((team === 1 ? two - one : one - two) / 400));
+    const score = team === match.winning_team ? 1 : 0;
+    const after = Math.max(0, Math.round(rating + 32 * (score - expected)));
+    await db.query('UPDATE users SET rating = $2 WHERE id = $1', [id, after]);
+    await db.query('UPDATE doubles_match_players SET rating_before = $3, rating_after = $4 WHERE match_id = $1 AND user_id = $2',
+      [match.id, id, rating, after]);
+    ratings.push({ id, before: rating, after, change: after - rating });
+  }
+  await db.query("UPDATE doubles_matches SET status = 'completed', completed_at = NOW() WHERE id = $1", [match.id]);
+  return { status: 'completed', matchId: match.id, winningTeam: match.winning_team, ratings };
+});
+
+doubles.use((error, req, res, next) => {
+  if (!error.status) console.error('Doubles request failed:', error);
+  res.status(error.status ?? 500).json({ error: error.status ? error.message : 'Could not complete request.' });
+});
