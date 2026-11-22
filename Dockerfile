@@ -7,6 +7,7 @@ RUN npm ci --omit=dev
 
 COPY app.js ./
 COPY db.js ./
+COPY doubles.js ./
 COPY frontend ./frontend
 
 USER node

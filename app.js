@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
+import { doubles } from './doubles.js';
 import { pool, checkDatabaseConnection } from './db.js';
 
 const app = express();
@@ -188,7 +189,7 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-app.get('/auth/session', async (req, res) => {
+async function requireSession(req, res, next) {
   res.set('Cache-Control', 'no-store');
 
   const cookies = req.get('cookie') ?? '';
@@ -214,12 +215,16 @@ app.get('/auth/session', async (req, res) => {
       return res.status(401).json({ error: 'Sign in to continue.' });
     }
 
-    return res.json(result.rows[0]);
+    req.player = result.rows[0];
+    return next();
   } catch (error) {
     console.error('Session check failed:', error.code ?? error.name);
     return res.status(500).json({ error: 'Could not check your session.' });
   }
-});
+}
+
+app.get('/auth/session', requireSession, (req, res) => res.json(req.player));
+app.use('/doubles', requireSession, doubles);
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Badminton Ranked is listening on port ${port}`);
