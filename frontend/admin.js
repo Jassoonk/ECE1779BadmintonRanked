@@ -7,6 +7,7 @@ const appStatus = document.querySelector('#admin-app-status');
 const dbStatus = document.querySelector('#admin-db-status');
 const playersBody = document.querySelector('#admin-players-body');
 const playersMessage = document.querySelector('#admin-players-message');
+const deletePlayers = document.querySelector('#admin-delete-players');
 const inviteForm = document.querySelector('#admin-invite-form');
 const inviteMessage = document.querySelector('#admin-invite-message');
 let adminToken;
@@ -27,7 +28,7 @@ async function checkHealth(path, statusElement) {
 }
 
 // Reuse leaderboard data to populate the dashboard's player table.
-async function loadAdminPlayers() {
+async function loadAdminPlayers(successMessage) {
   playersMessage.textContent = 'Loading players…';
 
   try {
@@ -47,20 +48,66 @@ async function loadAdminPlayers() {
       const row = document.createElement('tr');
       row.insertCell().textContent = player.display_name;
 
-      const ratingCell = row.insertCell();
-      ratingCell.textContent = player.rating;
-      ratingCell.classList.add('text-end');
+      const ratingForm = document.createElement('form');
+      ratingForm.className = 'input-group input-group-sm';
+      ratingForm.innerHTML = `
+        <input type="number" class="form-control" min="0" max="1000" step="1" required>
+        <button type="submit" class="btn btn-outline-success">Save</button>
+      `;
+      const ratingInput = ratingForm.querySelector('input');
+      const saveRating = ratingForm.querySelector('button');
+      ratingInput.value = player.rating;
+      ratingInput.setAttribute('aria-label', 'Rating for ' + player.display_name);
+      ratingForm.addEventListener('submit', event => {
+        event.preventDefault();
+        changePlayers('/admin/players/' + player.id + '/rating', 'PATCH', saveRating, {
+          rating: ratingInput.valueAsNumber
+        });
+      });
+      row.insertCell().append(ratingForm);
 
       rows.append(row);
     }
 
     playersBody.replaceChildren(rows);
-    playersMessage.textContent = players.length === 0 ? 'No players yet.' : '';
+    playersMessage.textContent = successMessage ?? (players.length === 0 ? 'No players yet.' : '');
   } catch {
     playersBody.replaceChildren();
     playersMessage.textContent = 'Could not load players. Please try again.';
   }
 }
+
+async function changePlayers(path, method, button, body) {
+  button.disabled = true;
+  playersMessage.textContent = '';
+  try {
+    const response = await fetch(path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + adminToken
+      },
+      body: JSON.stringify(body)
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      playersMessage.textContent = result.error;
+      return;
+    }
+    // Reload the list so its order reflects the latest ratings.
+    await loadAdminPlayers(result.message);
+  } catch {
+    playersMessage.textContent = 'Could not update players. Please try again.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+deletePlayers.addEventListener('click', () => {
+  if (window.confirm('Permanently delete all players, queued entries, and match history?')) {
+    changePlayers('/admin/players', 'DELETE', deletePlayers);
+  }
+});
 
 // Send the password as JSON and keep dashboard controls hidden during verification.
 adminForm.addEventListener('submit', async (event) => {
