@@ -43,6 +43,27 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+app.get('/admin/matches', requireAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT m.id, m.status, m.team1_score, m.team2_score,
+             m.corrected_team1_score, m.corrected_team2_score,
+             array_agg(u.display_name ORDER BY p.user_id) FILTER (WHERE p.team = 1) AS team1,
+             array_agg(u.display_name ORDER BY p.user_id) FILTER (WHERE p.team = 2) AS team2
+      FROM doubles_matches m
+      JOIN doubles_match_players p ON p.match_id = m.id
+      JOIN users u ON u.id = p.user_id
+      WHERE m.status <> 'completed'
+      GROUP BY m.id
+      ORDER BY m.created_at, m.id
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('Current match lookup failed:', error.code ?? error.name);
+    res.status(500).json({ error: 'Could not load current matches.' });
+  }
+});
+
 app.post('/admin/invite-code', requireAdmin, async (req, res) => {
   const code = req.body?.invite_code;
   if (typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) {
