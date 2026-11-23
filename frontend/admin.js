@@ -5,6 +5,8 @@ const adminMessage = document.querySelector('#admin-login-message');
 const adminDashboard = document.querySelector('#admin-dashboard');
 const appStatus = document.querySelector('#admin-app-status');
 const dbStatus = document.querySelector('#admin-db-status');
+const matchesList = document.querySelector('#admin-matches-list');
+const matchesMessage = document.querySelector('#admin-matches-message');
 const playersBody = document.querySelector('#admin-players-body');
 const playersMessage = document.querySelector('#admin-players-message');
 const deletePlayers = document.querySelector('#admin-delete-players');
@@ -26,6 +28,70 @@ async function checkHealth(path, statusElement) {
     statusElement.textContent = 'Unavailable';
   }
 }
+
+const matchStates = {
+  active: 'In play',
+  pending_confirmation: 'Awaiting confirmation',
+  pending_correction: 'Correction awaiting confirmation'
+};
+
+function renderCurrentMatch(match) {
+  const item = document.createElement('li');
+  item.className = 'list-group-item px-0';
+  const title = document.createElement('h3');
+  title.className = 'h6 mb-1';
+  title.textContent = `Match #${match.id} · ${matchStates[match.status]}`;
+  item.append(title);
+
+  for (const [index, team] of [match.team1, match.team2].entries()) {
+    const roster = document.createElement('div');
+    roster.textContent = `Team ${index + 1}: ${team.join(' + ')}`;
+    item.append(roster);
+  }
+  for (const [label, first, second] of [
+    ['Reported score', match.team1_score, match.team2_score],
+    ['Corrected score', match.corrected_team1_score, match.corrected_team2_score]
+  ]) {
+    if (first == null || second == null) continue;
+    const line = document.createElement('div');
+    const numbers = document.createElement('strong');
+    numbers.textContent = `${first} – ${second}`;
+    line.append(label + ': ', numbers);
+    item.append(line);
+  }
+  return item;
+}
+
+// Poll just the matches panel so refreshes leave player rating edits in place.
+let loadingMatches = false;
+async function loadCurrentMatches() {
+  if (adminDashboard.hidden || loadingMatches) return;
+  loadingMatches = true;
+  try {
+    const response = await fetch('/admin/matches', {
+      headers: { Authorization: 'Bearer ' + adminToken },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000)
+    });
+    if (response.status === 401) {
+      adminDashboard.hidden = true;
+      adminMessage.textContent = 'Sign in again to view the dashboard.';
+      matchesList.replaceChildren();
+      return;
+    }
+    if (!response.ok) throw new Error();
+    const matches = await response.json();
+    matchesList.replaceChildren(...matches.map(renderCurrentMatch));
+    matchesMessage.textContent = matches.length ? '' : 'No current matches.';
+  } catch {
+    matchesList.replaceChildren();
+    matchesMessage.textContent = 'Could not load current matches. Retrying…';
+  } finally {
+    loadingMatches = false;
+  }
+}
+
+setInterval(loadCurrentMatches, 2000);
 
 // Reuse leaderboard data to populate the dashboard's player table.
 async function loadAdminPlayers(successMessage) {
@@ -133,10 +199,11 @@ adminForm.addEventListener('submit', async (event) => {
       adminForm.reset();
       adminDashboard.hidden = false;
 
-      // Load the two health checks and the player list independently after the password is accepted.
+      // Load the dashboard panels after sign-in.
       await Promise.all([
         checkHealth('/health', appStatus),
         checkHealth('/db-health', dbStatus),
+        loadCurrentMatches(),
         loadAdminPlayers()
       ]);
     } else {

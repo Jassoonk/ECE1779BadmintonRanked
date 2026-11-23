@@ -8,9 +8,11 @@
   const cancel = byId('doubles-cancel');
   const invites = byId('doubles-invites');
   const details = byId('doubles-details');
+  const scoreForm = byId('doubles-score-form');
   const duo = byId('duo-queue');
   const picker = byId('doubles-person');
   let lastStatus;
+  let scoreContext;
   let polling;
   let acting = false;
 
@@ -52,34 +54,59 @@
     return element;
   }
 
-  // Ask for both team scores and submit them.
-function scoreInput(path, result) {
-  const first = prompt('Team 1 score:');
-  if (first === null) return;
+  // Collect the player's score first for a new result. Corrections use team order.
+  function scoreInput(path, playerTeam) {
+    const first = scoreForm.elements.team1_score;
+    const second = scoreForm.elements.team2_score;
+    const submit = scoreForm.querySelector('button');
+    const outcome = byId('doubles-score-outcome');
+    const reporting = playerTeam !== undefined;
 
-  const second = prompt('Team 2 score:');
-  if (second === null) return;
+    scoreForm.reset();
+    byId('doubles-score-first-label').textContent = reporting ? 'Enter your score' : 'Team 1 score';
+    byId('doubles-score-second-label').textContent = reporting ? "Enter your opponents' score" : 'Team 2 score';
+    scoreForm.hidden = false;
 
-  if (first.trim() === '' || second.trim() === '') {
-    alert('Enter both scores.');
-    return;
+    scoreForm.oninput = () => {
+      second.disabled = second.parentElement.hidden = reporting && !first.validity.valid;
+      const complete = first.validity.valid && !second.disabled && second.validity.valid;
+      const tied = complete && first.valueAsNumber === second.valueAsNumber;
+      submit.hidden = reporting && !complete;
+      submit.disabled = !complete || tied;
+      outcome.textContent = '';
+      if (tied) {
+        outcome.textContent = 'Enter two different scores.';
+      } else if (reporting && complete) {
+        outcome.textContent = first.valueAsNumber > second.valueAsNumber
+          ? "Congratulations, you've won!"
+          : "You've lost.";
+      }
+    };
+    scoreForm.oninput();
+
+    scoreForm.onsubmit = event => {
+      event.preventDefault();
+      if (submit.disabled) return;
+      const [team1_score, team2_score] = playerTeam === 2
+        ? [second.valueAsNumber, first.valueAsNumber]
+        : [first.valueAsNumber, second.valueAsNumber];
+      act(path, { team1_score, team2_score });
+    };
+    if (!reporting) first.focus();
   }
 
-  const team1_score = Number(first);
-  const team2_score = Number(second);
-
-  if (!Number.isInteger(team1_score) ||
-      !Number.isInteger(team2_score) ||
-      team1_score < 0 || team2_score < 0 ||
-      team1_score > 100 || team2_score > 100 ||
-      team1_score === team2_score) {
-    alert('Enter valid scores.');
-    return;
+  function showScore(label, first, second) {
+    const line = document.createElement('p');
+    const team1 = document.createElement('strong');
+    const team2 = document.createElement('strong');
+    team1.className = team2.className = 'fs-4';
+    team1.textContent = first;
+    team2.textContent = second;
+    line.append(label + ': Team 1: ', team1, ' - Team 2: ', team2);
+    details.append(line);
   }
 
-  act(path, { result, team1_score, team2_score });
-}
-// Render team rosters, then show result controls for the current match state.
+  // Render team rosters, then show result controls for the current match state.
   function renderMatch(match, player) {
     const heading = document.createElement('h3');
     heading.className = 'h6';
@@ -87,58 +114,37 @@ function scoreInput(path, result) {
     details.append(heading);
     for (const team of [1, 2]) {
       const line = document.createElement('p');
-      const names = match.players.filter(p => p.team === team).map(p => `${p.name} (${p.rating})`);
-      line.textContent = `Team ${team}: ${names.join(' + ')}`;
+      line.append(`Team ${team}: `);
+      for (const [index, member] of match.players.filter(p => p.team === team).entries()) {
+        if (index > 0) line.append(' + ');
+        const name = document.createElement(String(member.id) === String(player.id) ? 'strong' : 'span');
+        name.textContent = member.name;
+        line.append(name, ` (${member.rating})`);
+      }
       details.append(line);
     }
-    const path = `/matches/${match.id}`;
-    if (match.status === 'active') {
-      const won = document.createElement('button');
-    won.type = 'button';
-    won.className = 'btn btn-sm me-2 mb-2 btn-success';
-    won.textContent = 'I Won';
-    won.onclick = () => scoreInput(path + '/result', 'win');
+    if (match.status === 'active') return;
 
-    const lost = document.createElement('button');
-    lost.type = 'button';
-    lost.className = 'btn btn-sm me-2 mb-2 btn-outline-secondary';
-    lost.textContent = 'I Lost';
-    lost.onclick = () => scoreInput(path + '/result', 'loss');
-
-    details.append(won, lost);
-    return;
+    if (Number.isInteger(match.team1_score) && Number.isInteger(match.team2_score)) {
+      showScore('Reported score', match.team1_score, match.team2_score);
+    } else {
+      const text = document.createElement('p');
+      text.textContent = `Reported winner: Team ${match.proposed_winning_team}. Waiting for the opposing team.`;
+      details.append(text);
     }
-    const text = document.createElement('p');
-    text.textContent = `Reported winner: Team ${match.proposed_winning_team}. Waiting for the opposing team.`;
-    details.append(text);
-    // Normalize player IDs because the roster and session can return them in different JSON types.
     if (match.status === 'pending_correction') {
-    const correction = document.createElement('p');
-    correction.textContent =
-      `Corrected score: Team 1 ${match.corrected_team1_score} - Team 2 ${match.corrected_team2_score}`;
-    details.append(correction);
-
-    if (String(player.id) === String(match.submitted_by)) {
-      details.append(
-        button('Confirm Correction', 'success', path + '/confirm', { decision: 'confirm' }),
-        button('Reject Correction', 'outline-danger', path + '/confirm', { decision: 'dispute' })
-      );
+      showScore('Corrected score', match.corrected_team1_score, match.corrected_team2_score);
     }
-  }
-  const teamOf = id => match.players.find(p => String(p.id) === String(id)).team;
-    if (match.status === 'pending_confirmation' &&
-      teamOf(player.id) !== teamOf(match.submitted_by)) {
-    const correct = document.createElement('button');
-    correct.type = 'button';
-    correct.className = 'btn btn-sm me-2 mb-2 btn-outline-primary';
-    correct.textContent = 'Correct Score';
-    correct.onclick = () => scoreInput(path + '/correct');
-    details.append(correct);
-  }
-  if (match.status === 'pending_confirmation' &&
-      teamOf(player.id) !== teamOf(match.submitted_by)) {
-      details.append(button('Confirm result', 'success', path + '/confirm', { decision: 'confirm' }),
-        button('Dispute result', 'outline-danger', path + '/confirm', { decision: 'dispute' }));
+
+    const path = `/matches/${match.id}`;
+
+    if (match.can_review_score) {
+      const dispute = document.createElement('button');
+      dispute.type = 'button';
+      dispute.className = 'btn btn-sm me-2 mb-2 btn-outline-primary';
+      dispute.textContent = 'Dispute';
+      dispute.onclick = () => scoreInput(path + '/correct');
+      details.append(button('Agree', 'success', path + '/confirm', { decision: 'confirm' }), dispute);
     }
   }
 
@@ -156,6 +162,19 @@ function scoreInput(path, result) {
       if (actions.hidden) duo.open = false;
       invites.replaceChildren();
       details.replaceChildren();
+
+      // Keep the form open during polling unless the player or match state changes.
+      const currentScoreContext = data.match
+        ? `${player.id}/${data.match.id}/${data.match.status}/${data.match.can_review_score}`
+        : null;
+      if (currentScoreContext !== scoreContext) {
+        scoreForm.hidden = true;
+        scoreContext = currentScoreContext;
+        if (data.match?.status === 'active') {
+          const member = data.match.players.find(p => String(p.id) === String(player.id));
+          scoreInput(`/matches/${data.match.id}/result`, member.team);
+        }
+      }
 
       if (data.match) {
         status.textContent = 'Match found!';
@@ -198,13 +217,14 @@ function scoreInput(path, result) {
         return;
       }
       // Clear lobby controls and match details when there is no valid session.
-      inviteCodeForm.hidden = actions.hidden = cancel.hidden = true;
+      inviteCodeForm.hidden = actions.hidden = cancel.hidden = scoreForm.hidden = true;
       inviteCodeForm.reset();
       duo.open = false;
       invites.replaceChildren();
       details.replaceChildren();
       message.textContent = '';
       lastStatus = undefined;
+      scoreContext = undefined;
       status.textContent = 'Sign in to join a ranked doubles match.';
     }
   }

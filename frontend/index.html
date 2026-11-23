@@ -233,6 +233,22 @@
             <div id="doubles-invites"></div>
             <button id="doubles-cancel" type="button" class="btn btn-outline-danger w-100" hidden>Cancel Queue</button>
             <div id="doubles-details" class="mt-3"></div>
+            <form id="doubles-score-form" class="mt-2" hidden>
+              <div class="row g-2">
+                <label class="col-6 form-label mb-0">
+                  <span id="doubles-score-first-label">Team 1 score</span>
+                  <input name="team1_score" type="number" class="form-control form-control-sm"
+                    min="0" max="30" step="1" required>
+                </label>
+                <label class="col-6 form-label mb-0">
+                  <span id="doubles-score-second-label">Team 2 score</span>
+                  <input name="team2_score" type="number" class="form-control form-control-sm"
+                    min="0" max="30" step="1" required>
+                </label>
+              </div>
+              <p id="doubles-score-outcome" class="mt-2 mb-0" role="status"></p>
+              <button type="submit" class="btn btn-primary btn-sm mt-2">Submit score</button>
+            </form>
             <p id="doubles-message" class="small text-body-secondary mt-3 mb-0" role="status"></p>
           </div>
         </section>

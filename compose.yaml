@@ -7,6 +7,7 @@ services:
     # Connect to PostgreSQL over the Compose network using the db service name.
     environment:
       PORT: 3000
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       PGHOST: db
       PGPORT: 5432
       PGUSER: badminton
@@ -23,6 +24,7 @@ services:
       POSTGRES_USER: badminton
       POSTGRES_PASSWORD: local-development-only
       POSTGRES_DB: badminton_ranked
+      INITIAL_INVITE_CODE: "${INITIAL_INVITE_CODE:?Set INITIAL_INVITE_CODE in .env}"
     # Keep data across container restarts and initialize the schema when the database volume is empty.
     volumes:
       - postgres_data:/var/lib/postgresql/data
