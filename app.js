@@ -15,30 +15,54 @@ app.get('/admin', (_req, res) => {
   res.sendFile('admin.html', { root: 'frontend' });
 });
 
-// The admin password check is available only outside production and serves the local dashboard.
-const localAdminPassword = '123456';
-let adminToken;
+// Configure the admin password through the environment on each replica.
+const adminPassword = process.env.ADMIN_PASSWORD;
 
-app.post('/admin/login', (req, res) => {
+app.post('/admin/login', async (req, res) => {
   res.set('Cache-Control', 'no-store');
 
-  if (process.env.NODE_ENV === 'production') {
+  if (!adminPassword) {
     return res.status(503).json({ error: 'Admin sign-in is unavailable.' });
   }
 
-  if (req.body?.password !== localAdminPassword) {
+  if (req.body?.password !== adminPassword) {
     return res.status(401).json({ error: 'Incorrect admin password.' });
   }
 
-  adminToken ??= randomBytes(32).toString('hex');
-  return res.json({ message: 'Admin password accepted.', token: adminToken });
+  try {
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + sessionDurationMs);
+    await pool.query('DELETE FROM admin_sessions WHERE expires_at <= NOW()');
+    await pool.query(
+      'INSERT INTO admin_sessions (token_hash, expires_at) VALUES ($1, $2)',
+      [hashSessionToken(token), expiresAt]
+    );
+    return res.json({ message: 'Admin password accepted.', token });
+  } catch (error) {
+    console.error('Admin sign-in failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not sign in as admin.' });
+  }
 });
 
-// Check the token issued at admin sign-in before changing admin data.
-function requireAdmin(req, res, next) {
+// A token issued by one replica can be verified by any replica using the same database.
+async function requireAdmin(req, res, next) {
   res.set('Cache-Control', 'no-store');
-  if (!adminToken || req.get('Authorization') !== 'Bearer ' + adminToken) {
+  const token = req.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+  if (!adminPassword || !token) {
     return res.status(401).json({ error: 'Sign in as admin to continue.' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT 1 FROM admin_sessions WHERE token_hash = $1 AND expires_at > NOW()',
+      [hashSessionToken(token)]
+    );
+    if (!result.rowCount) {
+      return res.status(401).json({ error: 'Sign in as admin to continue.' });
+    }
+  } catch (error) {
+    console.error('Admin session check failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not check the admin session.' });
   }
   next();
 }

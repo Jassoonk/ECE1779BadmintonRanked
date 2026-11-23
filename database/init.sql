@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     invite_code_verified BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+-- Share admin bearer-token digests across backend replicas.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
 -- A pending invitation becomes a queued duo when the partner accepts.
 CREATE TABLE IF NOT EXISTS doubles_parties (
     id BIGSERIAL PRIMARY KEY,
@@ -66,9 +72,12 @@ CREATE TABLE IF NOT EXISTS lobby_settings (
     invite_code TEXT NOT NULL CHECK (invite_code ~ '^[0-9]{6}$')
 );
 
--- Set the initial code without overwriting an admin's saved code.
+-- Seed an empty lobby from the environment. Keep any code already saved by the admin.
+\set initial_invite_code ''
+\getenv initial_invite_code INITIAL_INVITE_CODE
 INSERT INTO lobby_settings (invite_code)
-VALUES ('123456')
+SELECT :'initial_invite_code'
+WHERE NOT EXISTS (SELECT 1 FROM lobby_settings)
 ON CONFLICT (singleton) DO NOTHING;
 
 COMMIT;
