@@ -52,7 +52,34 @@
     return element;
   }
 
-  // Render team rosters, then show result controls for the current match state.
+  // Ask for both team scores and submit them.
+function scoreInput(path, result) {
+  const first = prompt('Team 1 score:');
+  if (first === null) return;
+
+  const second = prompt('Team 2 score:');
+  if (second === null) return;
+
+  if (first.trim() === '' || second.trim() === '') {
+    alert('Enter both scores.');
+    return;
+  }
+
+  const team1_score = Number(first);
+  const team2_score = Number(second);
+
+  if (!Number.isInteger(team1_score) ||
+      !Number.isInteger(team2_score) ||
+      team1_score < 0 || team2_score < 0 ||
+      team1_score > 100 || team2_score > 100 ||
+      team1_score === team2_score) {
+    alert('Enter valid scores.');
+    return;
+  }
+
+  act(path, { result, team1_score, team2_score });
+}
+// Render team rosters, then show result controls for the current match state.
   function renderMatch(match, player) {
     const heading = document.createElement('h3');
     heading.className = 'h6';
@@ -66,16 +93,50 @@
     }
     const path = `/matches/${match.id}`;
     if (match.status === 'active') {
-      details.append(button('I Won', 'success', path + '/result', { result: 'win' }),
-        button('I Lost', 'outline-secondary', path + '/result', { result: 'loss' }));
-      return;
+      const won = document.createElement('button');
+    won.type = 'button';
+    won.className = 'btn btn-sm me-2 mb-2 btn-success';
+    won.textContent = 'I Won';
+    won.onclick = () => scoreInput(path + '/result', 'win');
+
+    const lost = document.createElement('button');
+    lost.type = 'button';
+    lost.className = 'btn btn-sm me-2 mb-2 btn-outline-secondary';
+    lost.textContent = 'I Lost';
+    lost.onclick = () => scoreInput(path + '/result', 'loss');
+
+    details.append(won, lost);
+    return;
     }
     const text = document.createElement('p');
     text.textContent = `Reported winner: Team ${match.proposed_winning_team}. Waiting for the opposing team.`;
     details.append(text);
     // Normalize player IDs because the roster and session can return them in different JSON types.
-    const teamOf = id => match.players.find(p => String(p.id) === String(id)).team;
-    if (teamOf(player.id) !== teamOf(match.submitted_by)) {
+    if (match.status === 'pending_correction') {
+    const correction = document.createElement('p');
+    correction.textContent =
+      `Corrected score: Team 1 ${match.corrected_team1_score} - Team 2 ${match.corrected_team2_score}`;
+    details.append(correction);
+
+    if (String(player.id) === String(match.submitted_by)) {
+      details.append(
+        button('Confirm Correction', 'success', path + '/confirm', { decision: 'confirm' }),
+        button('Reject Correction', 'outline-danger', path + '/confirm', { decision: 'dispute' })
+      );
+    }
+  }
+  const teamOf = id => match.players.find(p => String(p.id) === String(id)).team;
+    if (match.status === 'pending_confirmation' &&
+      teamOf(player.id) !== teamOf(match.submitted_by)) {
+    const correct = document.createElement('button');
+    correct.type = 'button';
+    correct.className = 'btn btn-sm me-2 mb-2 btn-outline-primary';
+    correct.textContent = 'Correct Score';
+    correct.onclick = () => scoreInput(path + '/correct');
+    details.append(correct);
+  }
+  if (match.status === 'pending_confirmation' &&
+      teamOf(player.id) !== teamOf(match.submitted_by)) {
       details.append(button('Confirm result', 'success', path + '/confirm', { decision: 'confirm' }),
         button('Dispute result', 'outline-danger', path + '/confirm', { decision: 'dispute' }));
     }
