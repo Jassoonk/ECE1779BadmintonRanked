@@ -7,6 +7,9 @@ const appStatus = document.querySelector('#admin-app-status');
 const dbStatus = document.querySelector('#admin-db-status');
 const playersBody = document.querySelector('#admin-players-body');
 const playersMessage = document.querySelector('#admin-players-message');
+const inviteForm = document.querySelector('#admin-invite-form');
+const inviteMessage = document.querySelector('#admin-invite-message');
+let adminToken;
 
 // Show each endpoint's current health and cap how long the browser waits for a response.
 async function checkHealth(path, statusElement) {
@@ -78,6 +81,7 @@ adminForm.addEventListener('submit', async (event) => {
     const result = await response.json();
 
     if (response.ok) {
+      adminToken = result.token;
       adminMessage.textContent = result.message;
       adminForm.reset();
       adminDashboard.hidden = false;
@@ -95,6 +99,32 @@ adminForm.addEventListener('submit', async (event) => {
     adminMessage.textContent = 'Could not reach the server. Please try again.';
   } finally {
     adminFields.disabled = false;
+  }
+});
+
+inviteForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = inviteForm.querySelector('button[type="submit"]');
+  const invite_code = new FormData(inviteForm).get('invite_code');
+  submit.disabled = true;
+  inviteMessage.textContent = 'Saving invite code...';
+
+  try {
+    const response = await fetch('/admin/invite-code', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + adminToken
+      },
+      body: JSON.stringify({ invite_code })
+    });
+    const result = await response.json();
+    inviteMessage.textContent = response.ok ? result.message : result.error;
+    if (response.ok) inviteForm.reset();
+  } catch {
+    inviteMessage.textContent = 'Could not save the invite code. Please try again.';
+  } finally {
+    submit.disabled = false;
   }
 });
 
