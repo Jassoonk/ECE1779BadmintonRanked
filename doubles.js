@@ -116,6 +116,30 @@ async function assertAvailable(db, ids) {
   if (rowCount) reject(409, 'A player is already invited, queued or in a match.');
 }
 
+function requireInviteCode(req) {
+  if (!req.inviteCodeVerified) reject(403, 'Verify the invite code before joining the queue.');
+}
+
+doubles.post('/invite-code/verify', async (req, res) => {
+  const code = req.body?.invite_code;
+  if (typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) {
+    reject(400, 'Enter a six-digit invite code.');
+  }
+
+  // Save verification against the current session only when the stored code matches.
+  const result = await pool.query(`
+    UPDATE user_sessions
+    SET invite_code_verified = TRUE
+    WHERE token_hash = $1 AND expires_at > NOW()
+      AND EXISTS (
+        SELECT 1 FROM lobby_settings WHERE singleton AND invite_code = $2
+      )
+  `, [req.sessionTokenHash, code]);
+
+  if (result.rowCount === 0) reject(403, 'The invite code is incorrect.');
+  res.json({ verified: true });
+});
+
 // Refresh the heartbeat and let queued players trigger another matchmaking attempt through polling.
 doubles.post('/presence', async (req, res) => {
   const id = req.player.id;
@@ -123,7 +147,7 @@ doubles.post('/presence', async (req, res) => {
     RETURNING EXISTS (SELECT 1 FROM doubles_parties WHERE $1 IN (leader_id, partner_id)
       AND queued_at IS NOT NULL) AS queued`, [id]);
   if (presence.queued) await transaction(db => tryMatch(db, id));
-  res.json({ online: true, player: req.player });
+  res.json({ online: true, player: req.player, inviteCodeVerified: req.inviteCodeVerified });
 });
 
 // List other recently active players for the teammate picker.
@@ -135,6 +159,7 @@ doubles.get('/online', async (req, res) => {
 
 // Queue a one-player party and check whether it can join a balanced match immediately.
 mutation('/queue/solo', async (db, req, res) => {
+  requireInviteCode(req);
   const id = req.player.id;
   await assertAvailable(db, [id]);
   await db.query('INSERT INTO doubles_parties (leader_id, queued_at) VALUES ($1, NOW())', [id]);
@@ -145,6 +170,7 @@ mutation('/queue/solo', async (db, req, res) => {
 
 // Clear expired invitations and reserve both players by creating a pending party.
 mutation('/invites', async (db, req, res) => {
+  requireInviteCode(req);
   const id = req.player.id;
   const partner = checkId(req.body?.inviteeId);
   if (partner === id) reject(400, 'Choose another player.');
@@ -172,6 +198,7 @@ mutation('/invites/:id/respond', async (db, req) => {
     await db.query('DELETE FROM doubles_parties WHERE id = $1', [invite.id]);
     return { status: 'declined' };
   }
+  requireInviteCode(req);
   if (!invite.online) reject(409, 'Inviter is no longer online.');
   await db.query('UPDATE doubles_parties SET queued_at = NOW() WHERE id = $1', [invite.id]);
   const matchId = await tryMatch(db, req.player.id);

@@ -3,6 +3,7 @@
   const byId = id => document.getElementById(id);
   const status = byId('doubles-status');
   const message = byId('doubles-message');
+  const inviteCodeForm = byId('doubles-invite-code-form');
   const actions = byId('doubles-actions');
   const cancel = byId('doubles-cancel');
   const invites = byId('doubles-invites');
@@ -144,11 +145,13 @@ function scoreInput(path, result) {
   // Send a presence heartbeat before reading the latest invitation, queue, or match state.
   async function update() {
     try {
-      const { player } = await request('/presence', 'POST');
+      const { player, inviteCodeVerified } = await request('/presence', 'POST');
       const data = await request('/status');
       const incoming = data.invitations?.[0];
       const outgoing = data.outgoing?.[0];
-      actions.hidden = data.status !== 'idle' || Boolean(incoming || outgoing);
+      // Use the server's session state so verification survives a refresh.
+      inviteCodeForm.hidden = data.status !== 'idle' || inviteCodeVerified;
+      actions.hidden = data.status !== 'idle' || !inviteCodeVerified || Boolean(incoming || outgoing);
       cancel.hidden = data.status !== 'waiting';
       if (actions.hidden) duo.open = false;
       invites.replaceChildren();
@@ -162,12 +165,16 @@ function scoreInput(path, result) {
       } else if (incoming) {
         status.textContent = `${incoming.inviter_name} invited you to play doubles.`;
         const path = `/invites/${incoming.id}/respond`;
-        invites.append(button('Accept', 'success', path, { decision: 'accept' }),
-          button('Decline', 'outline-danger', path, { decision: 'decline' }));
+        if (inviteCodeVerified) {
+          invites.append(button('Accept', 'success', path, { decision: 'accept' }));
+        }
+        invites.append(button('Decline', 'outline-danger', path, { decision: 'decline' }));
       } else if (outgoing) {
         status.textContent = `Invitation sent to ${outgoing.invitee_name}. Waiting for acceptance.`;
       } else {
-        status.textContent = 'Ready to play doubles.';
+        status.textContent = inviteCodeVerified
+          ? 'Ready to play doubles.'
+          : 'Enter the invite code to join a queue.';
       }
       // After a match completes, reload both the leaderboard and the signed-in player's displayed rating.
       if (lastStatus === 'matched' && data.status === 'idle') {
@@ -191,7 +198,8 @@ function scoreInput(path, result) {
         return;
       }
       // Clear lobby controls and match details when there is no valid session.
-      actions.hidden = cancel.hidden = true;
+      inviteCodeForm.hidden = actions.hidden = cancel.hidden = true;
+      inviteCodeForm.reset();
       duo.open = false;
       invites.replaceChildren();
       details.replaceChildren();
@@ -206,6 +214,12 @@ function scoreInput(path, result) {
     polling ??= update().finally(() => { polling = null; });
     return polling;
   }
+  inviteCodeForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const invite_code = new FormData(inviteCodeForm).get('invite_code');
+    await act('/invite-code/verify', { invite_code });
+    if (inviteCodeForm.hidden) inviteCodeForm.reset();
+  });
   byId('doubles-solo').addEventListener('click', () => act('/queue/solo'));
   cancel.addEventListener('click', () => act('/queue/cancel'));
   byId('doubles-invite').addEventListener('click', () => {

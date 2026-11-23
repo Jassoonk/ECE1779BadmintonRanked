@@ -100,18 +100,15 @@
             <div class="card-body p-4">
               <h2 id="admin-invite-heading" class="h4 mb-3">Set invite code</h2>
 
-              <!-- Keep the invite code form disabled until it has a server endpoint. -->
-              <fieldset disabled>
+              <form id="admin-invite-form" method="post" action="/admin/invite-code">
                 <label for="admin-invite-code" class="form-label">New invite code</label>
                 <input id="admin-invite-code" name="invite_code" type="text"
                   class="form-control mb-3" inputmode="numeric"
-                  pattern="[0-9]{6}" maxlength="6" required>
-                <button type="button" class="btn btn-success">Save invite code</button>
-              </fieldset>
+                  pattern="[0-9]{6}" maxlength="6" autocomplete="off" required>
+                <button type="submit" class="btn btn-success">Save invite code</button>
+              </form>
 
-              <p class="small text-body-secondary mt-3 mb-0">
-                Invite code changes aren't connected yet.
-              </p>
+              <p id="admin-invite-message" class="small text-body-secondary mt-3 mb-0" role="status"></p>
             </div>
           </section>
         </div>
