@@ -222,7 +222,11 @@ doubles.get('/status', async (req, res) => {
     FROM doubles_match_players mine JOIN doubles_matches m ON m.id = mine.match_id
     JOIN doubles_match_players p ON p.match_id = m.id JOIN users u ON u.id = p.user_id
     WHERE mine.user_id = $1 AND mine.rating_after IS NULL GROUP BY m.id`, [id]);
-  if (match) return res.json({ status: 'matched', match });
+  if (match) {
+    return res.json({ status: 'matched', match: {
+      ...match, can_review_score: canReviewScore(match, match.players, id)
+    } });
+  }
   const { rows: [party] } = await pool.query(`SELECT p.*, a.display_name AS inviter_name, b.display_name AS invitee_name
     FROM doubles_parties p JOIN users a ON a.id = p.leader_id LEFT JOIN users b ON b.id = p.partner_id
     WHERE $1 IN (p.leader_id, p.partner_id) AND (p.queued_at IS NOT NULL OR p.created_at > ${inviteSince})`, [id]);
@@ -243,16 +247,13 @@ async function getMatch(db, id) {
   return match;
 }
 
-// Translate a player's win or loss report into a proposed winning team for the opponent to review.
+// Propose a score for the opposing team to review.
 mutation('/matches/:id/result', async (db, req) => {
-  const result = req.body?.result;
-  if (!['win', 'loss'].includes(result)) reject(400, 'Choose win or loss.');
   const match = await getMatch(db, req.params.id);
-  const { rows: [player] } = await db.query('SELECT team FROM doubles_match_players WHERE match_id = $1 AND user_id = $2',
+  const membership = await db.query('SELECT 1 FROM doubles_match_players WHERE match_id = $1 AND user_id = $2',
     [match.id, req.player.id]);
-  if (!player) reject(403, 'Not your match.');
+  if (!membership.rowCount) reject(403, 'Not your match.');
   if (match.status !== 'active') reject(409, 'Result already submitted or completed.');
-  const winningTeam = result === 'win' ? player.team : 3 - player.team;
 
   const team1Score = req.body?.team1_score;
   const team2Score = req.body?.team2_score;
@@ -264,9 +265,7 @@ mutation('/matches/:id/result', async (db, req) => {
     reject(400, 'Enter valid team scores.');
   }
 
-  if ((team1Score > team2Score ? 1 : 2) !== winningTeam) {
-    reject(400, 'Scores do not match the reported winner.');
-  }
+  const winningTeam = team1Score > team2Score ? 1 : 2;
 
   await db.query(
     `UPDATE doubles_matches
@@ -281,60 +280,40 @@ mutation('/matches/:id/result', async (db, req) => {
   return { status: 'pending_confirmation', matchId: match.id, proposedWinningTeam: winningTeam };
 });
 
-// Let an opposing player finalize the proposed result or reopen the match for a new report.
+// A correction assigns the next review to the team of the player in submitted_by.
+function canReviewScore(match, players, playerId) {
+  if (!['pending_confirmation', 'pending_correction'].includes(match.status)) return false;
+  const player = players.find(p => String(p.id) === String(playerId));
+  const assigned = players.find(p => String(p.id) === String(match.submitted_by));
+  if (!player || !assigned) return false;
+  return match.status === 'pending_correction' ? player.team === assigned.team : player.team !== assigned.team;
+}
+
+// Finalize the score when a player on the reviewing team agrees.
 mutation('/matches/:id/confirm', async (db, req) => {
-  const decision = req.body?.decision;
-  if (!['confirm', 'dispute'].includes(decision)) reject(400, 'Choose confirm or dispute.');
+  if (req.body?.decision !== 'confirm') reject(400, 'Confirm the proposed score.');
   const match = await getMatch(db, req.params.id);
   if (!['pending_confirmation', 'pending_correction'].includes(match.status)) {
     reject(409, 'Match is not awaiting confirmation.');
   }
   const { rows: players } = await db.query(`SELECT u.id, p.team, u.rating FROM doubles_match_players p
     JOIN users u ON u.id = p.user_id WHERE p.match_id = $1 ORDER BY u.id FOR UPDATE OF u`, [match.id]);
-  const confirmer = players.find(p => p.id === req.player.id);
-  const submitter = players.find(p => p.id === match.submitted_by);
-  if (!submitter || !confirmer) {
-    reject(403, 'Not allowed to review this result.');
+  if (!canReviewScore(match, players, req.player.id)) {
+    reject(403, 'Only the reviewing team can agree to this score.');
   }
 
   if (match.status === 'pending_correction') {
-    if (String(confirmer.id) !== String(submitter.id)) {
-      reject(403, 'Only the original submitter can review the correction.');
-    }
-  } else if (confirmer.team === submitter.team) {
-    reject(403, 'Only an opposing player can review this result.');
-  }
-  if (decision === 'dispute') {
+    match.winning_team = match.corrected_team1_score > match.corrected_team2_score ? 1 : 2;
     await db.query(
       `UPDATE doubles_matches
-       SET status = 'active',
-           submitted_by = NULL,
-           winning_team = NULL,
-           team1_score = NULL,
-           team2_score = NULL,
+       SET team1_score = corrected_team1_score,
+           team2_score = corrected_team2_score,
+           winning_team = $2,
            corrected_team1_score = NULL,
            corrected_team2_score = NULL
        WHERE id = $1`,
-      [match.id]
+      [match.id, match.winning_team]
     );
-    return { status: 'active', disputed: true };
-  }
-  if (match.status === 'pending_correction') {
-    if (decision === 'confirm') {
-      match.winning_team =
-        match.corrected_team1_score > match.corrected_team2_score ? 1 : 2;
-
-      await db.query(
-        `UPDATE doubles_matches
-         SET team1_score = corrected_team1_score,
-             team2_score = corrected_team2_score,
-             winning_team = $2,
-             corrected_team1_score = NULL,
-             corrected_team2_score = NULL
-         WHERE id = $1`,
-        [match.id, match.winning_team]
-      );
-    }
   }
   const teamOne = players.filter(p => p.team === 1);
   const teamTwo = players.filter(p => p.team === 2);
@@ -356,11 +335,11 @@ mutation('/matches/:id/confirm', async (db, req) => {
   return { status: 'completed', matchId: match.id, winningTeam: match.winning_team, ratings };
 });
 
-// Allow an opposing player to propose a corrected score.
+// Propose a replacement score and give the other team the next review.
 mutation('/matches/:id/correct', async (db, req) => {
   const match = await getMatch(db, req.params.id);
 
-  if (match.status !== 'pending_confirmation') {
+  if (!['pending_confirmation', 'pending_correction'].includes(match.status)) {
     reject(409, 'Match is not waiting for score confirmation.');
   }
 
@@ -375,29 +354,25 @@ mutation('/matches/:id/correct', async (db, req) => {
   }
 
   const { rows: players } = await db.query(
-    'SELECT user_id, team FROM doubles_match_players WHERE match_id = $1',
+    'SELECT user_id AS id, team FROM doubles_match_players WHERE match_id = $1 ORDER BY user_id',
     [match.id]
   );
-
-  const submitter = players.find(
-    p => String(p.user_id) === String(match.submitted_by)
-  );
-
-  const corrector = players.find(
-    p => String(p.user_id) === String(req.player.id)
-  );
-
-  if (!submitter || !corrector || submitter.team === corrector.team) {
-    reject(403, 'Only the opposing team can correct the score.');
+  if (!canReviewScore(match, players, req.player.id)) {
+    reject(403, 'Only the reviewing team can propose a correction.');
   }
+  const corrector = players.find(p => p.id === req.player.id);
+  const nextReviewer = match.status === 'pending_confirmation'
+    ? match.submitted_by
+    : players.find(p => p.team !== corrector.team).id;
 
   await db.query(
     `UPDATE doubles_matches
      SET status = 'pending_correction',
          corrected_team1_score = $2,
-         corrected_team2_score = $3
+         corrected_team2_score = $3,
+         submitted_by = $4
      WHERE id = $1`,
-    [match.id, team1_score, team2_score]
+    [match.id, team1_score, team2_score, nextReviewer]
   );
 
   return {
