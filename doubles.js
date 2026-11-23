@@ -406,6 +406,35 @@ mutation('/matches/:id/correct', async (db, req) => {
     correctedScore: [team1_score, team2_score]
   };
 });
+// Show the 10 most recent completed doubles matches.
+doubles.get('/history', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT m.id, m.completed_at,
+             m.team1_score, m.team2_score,
+             json_agg(
+               json_build_object(
+                 'name', u.display_name,
+                 'team', p.team,
+                 'before', p.rating_before,
+                 'after', p.rating_after
+               )
+               ORDER BY p.team, p.user_id
+             ) AS players
+      FROM doubles_matches m
+      JOIN doubles_match_players p ON p.match_id = m.id
+      JOIN users u ON u.id = p.user_id
+      WHERE m.status = 'completed'
+      GROUP BY m.id
+      ORDER BY m.completed_at DESC
+      LIMIT 10
+    `);
+
+    res.json({ matches: rows });
+  } catch (error) {
+    next(error);
+  }
+});
 // Return a consistent JSON error shape and log unexpected failures on the server.
 doubles.use((error, req, res, next) => {
   if (!error.status) console.error('Doubles request failed:', error);
