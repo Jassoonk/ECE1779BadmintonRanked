@@ -381,7 +381,7 @@ mutation('/matches/:id/correct', async (db, req) => {
     correctedScore: [team1_score, team2_score]
   };
 });
-// Return a consistent JSON error shape and log unexpected failures on the server.
+// Fetch the 10 most recent completed doubles matches, including scores and rating changes.
 doubles.get('/history', async (req, res, next) => {
   try {
     const { rows } = await pool.query(`
@@ -411,7 +411,6 @@ doubles.get('/history', async (req, res, next) => {
   }
 });
 // Return a consistent JSON error shape and log unexpected failures on the server.
-
 doubles.use((error, req, res, next) => {
   if (!error.status) console.error('Doubles request failed:', error);
   res.status(error.status ?? 500).json({ error: error.status ? error.message : 'Could not complete request.' });
