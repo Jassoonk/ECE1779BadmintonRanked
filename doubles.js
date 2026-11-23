@@ -216,7 +216,7 @@ mutation('/queue/cancel', async (db, req) => {
 doubles.get('/status', async (req, res) => {
   const id = req.player.id;
   const { rows: [match] } = await pool.query(`SELECT m.id, m.status, m.submitted_by,
-    m.winning_team AS proposed_winning_team,
+    m.winning_team AS proposed_winning_team, m.team1_score, m.team2_score, m.corrected_team1_score, m.corrected_team2_score,
     json_agg(json_build_object('id', p.user_id, 'name', u.display_name, 'team', p.team, 'rating', u.rating)
       ORDER BY p.team, p.user_id) AS players
     FROM doubles_match_players mine JOIN doubles_matches m ON m.id = mine.match_id
@@ -253,8 +253,31 @@ mutation('/matches/:id/result', async (db, req) => {
   if (!player) reject(403, 'Not your match.');
   if (match.status !== 'active') reject(409, 'Result already submitted or completed.');
   const winningTeam = result === 'win' ? player.team : 3 - player.team;
-  await db.query(`UPDATE doubles_matches SET status = 'pending_confirmation', submitted_by = $2, winning_team = $3
-    WHERE id = $1`, [match.id, req.player.id, winningTeam]);
+
+  const team1Score = req.body?.team1_score;
+  const team2Score = req.body?.team2_score;
+
+  if (!Number.isInteger(team1Score) || !Number.isInteger(team2Score) ||
+      team1Score < 0 || team2Score < 0 ||
+      team1Score === team2Score ||
+      team1Score > 100 || team2Score > 100) {
+    reject(400, 'Enter valid team scores.');
+  }
+
+  if ((team1Score > team2Score ? 1 : 2) !== winningTeam) {
+    reject(400, 'Scores do not match the reported winner.');
+  }
+
+  await db.query(
+    `UPDATE doubles_matches
+     SET status = 'pending_confirmation',
+         submitted_by = $2,
+         winning_team = $3,
+         team1_score = $4,
+         team2_score = $5
+     WHERE id = $1`,
+    [match.id, req.player.id, winningTeam, team1Score, team2Score]
+  );
   return { status: 'pending_confirmation', matchId: match.id, proposedWinningTeam: winningTeam };
 });
 
@@ -263,15 +286,55 @@ mutation('/matches/:id/confirm', async (db, req) => {
   const decision = req.body?.decision;
   if (!['confirm', 'dispute'].includes(decision)) reject(400, 'Choose confirm or dispute.');
   const match = await getMatch(db, req.params.id);
-  if (match.status !== 'pending_confirmation') reject(409, 'Match is not awaiting confirmation.');
+  if (!['pending_confirmation', 'pending_correction'].includes(match.status)) {
+    reject(409, 'Match is not awaiting confirmation.');
+  }
   const { rows: players } = await db.query(`SELECT u.id, p.team, u.rating FROM doubles_match_players p
     JOIN users u ON u.id = p.user_id WHERE p.match_id = $1 ORDER BY u.id FOR UPDATE OF u`, [match.id]);
   const confirmer = players.find(p => p.id === req.player.id);
   const submitter = players.find(p => p.id === match.submitted_by);
-  if (!confirmer || confirmer.team === submitter.team) reject(403, 'Only an opposing player can review this result.');
+  if (!submitter || !confirmer) {
+    reject(403, 'Not allowed to review this result.');
+  }
+
+  if (match.status === 'pending_correction') {
+    if (String(confirmer.id) !== String(submitter.id)) {
+      reject(403, 'Only the original submitter can review the correction.');
+    }
+  } else if (confirmer.team === submitter.team) {
+    reject(403, 'Only an opposing player can review this result.');
+  }
   if (decision === 'dispute') {
-    await db.query("UPDATE doubles_matches SET status = 'active', submitted_by = NULL, winning_team = NULL WHERE id = $1", [match.id]);
+    await db.query(
+      `UPDATE doubles_matches
+       SET status = 'active',
+           submitted_by = NULL,
+           winning_team = NULL,
+           team1_score = NULL,
+           team2_score = NULL,
+           corrected_team1_score = NULL,
+           corrected_team2_score = NULL
+       WHERE id = $1`,
+      [match.id]
+    );
     return { status: 'active', disputed: true };
+  }
+  if (match.status === 'pending_correction') {
+    if (decision === 'confirm') {
+      match.winning_team =
+        match.corrected_team1_score > match.corrected_team2_score ? 1 : 2;
+
+      await db.query(
+        `UPDATE doubles_matches
+         SET team1_score = corrected_team1_score,
+             team2_score = corrected_team2_score,
+             winning_team = $2,
+             corrected_team1_score = NULL,
+             corrected_team2_score = NULL
+         WHERE id = $1`,
+        [match.id, match.winning_team]
+      );
+    }
   }
   const teamOne = players.filter(p => p.team === 1);
   const teamTwo = players.filter(p => p.team === 2);
@@ -293,6 +356,56 @@ mutation('/matches/:id/confirm', async (db, req) => {
   return { status: 'completed', matchId: match.id, winningTeam: match.winning_team, ratings };
 });
 
+// Allow an opposing player to propose a corrected score.
+mutation('/matches/:id/correct', async (db, req) => {
+  const match = await getMatch(db, req.params.id);
+
+  if (match.status !== 'pending_confirmation') {
+    reject(409, 'Match is not waiting for score confirmation.');
+  }
+
+  const { team1_score, team2_score } = req.body ?? {};
+
+  if (!Number.isInteger(team1_score) ||
+      !Number.isInteger(team2_score) ||
+      team1_score < 0 || team2_score < 0 ||
+      team1_score > 100 || team2_score > 100 ||
+      team1_score === team2_score) {
+    reject(400, 'Enter valid corrected scores.');
+  }
+
+  const { rows: players } = await db.query(
+    'SELECT user_id, team FROM doubles_match_players WHERE match_id = $1',
+    [match.id]
+  );
+
+  const submitter = players.find(
+    p => String(p.user_id) === String(match.submitted_by)
+  );
+
+  const corrector = players.find(
+    p => String(p.user_id) === String(req.player.id)
+  );
+
+  if (!submitter || !corrector || submitter.team === corrector.team) {
+    reject(403, 'Only the opposing team can correct the score.');
+  }
+
+  await db.query(
+    `UPDATE doubles_matches
+     SET status = 'pending_correction',
+         corrected_team1_score = $2,
+         corrected_team2_score = $3
+     WHERE id = $1`,
+    [match.id, team1_score, team2_score]
+  );
+
+  return {
+    status: 'pending_correction',
+    matchId: match.id,
+    correctedScore: [team1_score, team2_score]
+  };
+});
 // Return a consistent JSON error shape and log unexpected failures on the server.
 doubles.use((error, req, res, next) => {
   if (!error.status) console.error('Doubles request failed:', error);
