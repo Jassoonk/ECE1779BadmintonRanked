@@ -35,9 +35,13 @@ CREATE TABLE IF NOT EXISTS doubles_parties (
 -- Track the result workflow from an active match through confirmation and completion.
 CREATE TABLE IF NOT EXISTS doubles_matches (
     id BIGSERIAL PRIMARY KEY,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_confirmation', 'completed')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_confirmation', 'pending_correction', 'completed')),
     submitted_by BIGINT REFERENCES users(id),
     winning_team SMALLINT CHECK (winning_team IN (1, 2)),
+    team1_score INTEGER,
+    team2_score INTEGER,
+    corrected_team1_score INTEGER,
+    corrected_team2_score INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
