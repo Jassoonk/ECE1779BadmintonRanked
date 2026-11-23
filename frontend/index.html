@@ -55,12 +55,6 @@
                 <p id="password-hint" class="form-text mb-0">Use at least 8 characters.</p>
               </div>
 
-              <div class="mb-4">
-                <label for="invite-code" class="form-label">Invite code</label>
-                <input id="invite-code" name="invite_code" type="text" class="form-control"
-                  inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
-              </div>
-
               <h3 class="h6">Player details</h3>
               <div class="mb-4">
                 <label for="display-name" class="form-label">
@@ -217,7 +211,14 @@
             </p>
 
             <p id="doubles-status" class="small text-body-secondary" role="status">Checking session…</p>
-            <!-- Keep queue entry controls hidden until the lobby reports an idle, signed-in player. -->
+            <form id="doubles-invite-code-form" method="post" action="/doubles/invite-code/verify" class="mb-3" hidden>
+              <label for="invite-code" class="form-label">Invite code</label>
+              <div class="input-group">
+                <input id="invite-code" name="invite_code" type="text" class="form-control"
+                  inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required>
+                <button type="submit" class="btn btn-success">Verify code</button>
+              </div>
+            </form>
             <div id="doubles-actions" hidden>
               <button id="doubles-solo" type="button" class="btn btn-outline-success w-100">Solo Queue</button>
               <details id="duo-queue" class="mt-2">

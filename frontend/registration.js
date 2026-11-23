@@ -17,7 +17,6 @@ form.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         email: fields.get('email'),
         password: fields.get('password'),
-        invite_code: fields.get('invite_code'),
         display_name: fields.get('display_name'),
         starting_rank: fields.get('starting_rank')
       })

@@ -17,6 +17,7 @@ app.get('/admin', (_req, res) => {
 
 // The admin password check is available only outside production and serves the local dashboard.
 const localAdminPassword = '123456';
+let adminToken;
 
 app.post('/admin/login', (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -29,7 +30,41 @@ app.post('/admin/login', (req, res) => {
     return res.status(401).json({ error: 'Incorrect admin password.' });
   }
 
-  return res.json({ message: 'Admin password accepted.' });
+  adminToken ??= randomBytes(32).toString('hex');
+  return res.json({ message: 'Admin password accepted.', token: adminToken });
+});
+
+app.post('/admin/invite-code', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!adminToken || req.get('Authorization') !== 'Bearer ' + adminToken) {
+    return res.status(401).json({ error: 'Sign in as admin to save the invite code.' });
+  }
+
+  const code = req.body?.invite_code;
+  if (typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Enter a six-digit invite code.' });
+  }
+
+  try {
+    // Only save the code when there are no player accounts.
+    const result = await pool.query(`
+      INSERT INTO lobby_settings (invite_code)
+      SELECT $1
+      WHERE NOT EXISTS (SELECT 1 FROM users)
+      ON CONFLICT (singleton)
+      DO UPDATE SET invite_code = EXCLUDED.invite_code
+    `, [code]);
+
+    if (result.rowCount === 0) {
+      return res.status(409).json({
+        error: 'You can change the invite code only before any players have registered.'
+      });
+    }
+    return res.json({ message: 'Invite code saved.' });
+  } catch (error) {
+    console.error('Invite code save failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not save the invite code.' });
+  }
 });
 
 // Keep the app liveness check independent of PostgreSQL.
@@ -92,14 +127,9 @@ function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-// Validate the invite and account fields before running scrypt or writing to the database.
+// Validate account fields before running scrypt or writing to the database.
 app.post('/auth/register', async (req, res) => {
-  const { email, password, invite_code, display_name, starting_rank } = req.body ?? {};
-
-  if (invite_code !== '123456') {
-    return res.status(403).json({ error: 'The invite code is incorrect.' });
-  }
-
+  const { email, password, display_name, starting_rank } = req.body ?? {};
   const normalizedEmail = normalizeEmail(email);
   const displayName = typeof display_name === 'string' ? display_name.trim() : '';
 
@@ -219,19 +249,24 @@ async function requireSession(req, res, next) {
   }
 
   try {
-    const result = await pool.query(
-      'SELECT users.id, users.display_name, users.rating FROM user_sessions' +
-        ' JOIN users ON users.id = user_sessions.user_id' +
-        ' WHERE user_sessions.token_hash = $1 AND user_sessions.expires_at > NOW()',
-      [hashSessionToken(token)]
-    );
+    const tokenHash = hashSessionToken(token);
+    const result = await pool.query(`
+      SELECT u.id, u.display_name, u.rating,
+             s.invite_code_verified AS "inviteCodeVerified"
+      FROM user_sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = $1 AND s.expires_at > NOW()
+    `, [tokenHash]);
 
     if (result.rowCount === 0) {
       return res.status(401).json({ error: 'Sign in to continue.' });
     }
 
     // Pass the database-backed player to the session endpoint and the doubles router.
-    req.player = result.rows[0];
+    const { inviteCodeVerified, ...player } = result.rows[0];
+    req.player = player;
+    req.inviteCodeVerified = inviteCodeVerified;
+    req.sessionTokenHash = tokenHash;
     return next();
   } catch (error) {
     console.error('Session check failed:', error.code ?? error.name);
