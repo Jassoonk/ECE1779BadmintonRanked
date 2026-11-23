@@ -76,14 +76,19 @@
 
           <section class="card border-0 shadow-sm mt-4" aria-labelledby="admin-players-heading">
             <div class="card-body p-4">
-              <h2 id="admin-players-heading" class="h4 mb-3">Players</h2>
+              <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                <h2 id="admin-players-heading" class="h4 mb-0">Players</h2>
+                <button id="admin-delete-players" type="button" class="btn btn-outline-danger btn-sm">
+                  Delete all players
+                </button>
+              </div>
 
               <div class="table-responsive">
                 <table class="table table-striped align-middle mb-0">
                   <thead>
                     <tr>
                       <th scope="col">Player</th>
-                      <th scope="col" class="text-end">Current MMR</th>
+                      <th scope="col">Current MMR</th>
                     </tr>
                   </thead>
                   <!-- The admin script fills this table from the leaderboard endpoint. -->

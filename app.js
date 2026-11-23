@@ -34,12 +34,16 @@ app.post('/admin/login', (req, res) => {
   return res.json({ message: 'Admin password accepted.', token: adminToken });
 });
 
-app.post('/admin/invite-code', async (req, res) => {
+// Check the token issued at admin sign-in before changing admin data.
+function requireAdmin(req, res, next) {
   res.set('Cache-Control', 'no-store');
   if (!adminToken || req.get('Authorization') !== 'Bearer ' + adminToken) {
-    return res.status(401).json({ error: 'Sign in as admin to save the invite code.' });
+    return res.status(401).json({ error: 'Sign in as admin to continue.' });
   }
+  next();
+}
 
+app.post('/admin/invite-code', requireAdmin, async (req, res) => {
   const code = req.body?.invite_code;
   if (typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) {
     return res.status(400).json({ error: 'Enter a six-digit invite code.' });
@@ -64,6 +68,42 @@ app.post('/admin/invite-code', async (req, res) => {
   } catch (error) {
     console.error('Invite code save failed:', error.code ?? error.name);
     return res.status(500).json({ error: 'Could not save the invite code.' });
+  }
+});
+
+app.patch('/admin/players/:id/rating', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rating = req.body?.rating;
+  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
+    return res.status(400).json({ error: 'Invalid player ID.' });
+  }
+  // Validate the rating here as well as in the admin form.
+  if (!Number.isInteger(rating) || rating < 0 || rating > 1000) {
+    return res.status(400).json({ error: 'Enter a whole-number rating between 0 and 1000.' });
+  }
+
+  try {
+    const result = await pool.query('UPDATE users SET rating = $1 WHERE id = $2', [rating, id]);
+    if (!result.rowCount) {
+      return res.status(404).json({ error: 'Player not found.' });
+    }
+    return res.json({ message: 'Rating saved.' });
+  } catch (error) {
+    console.error('Rating save failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not save the rating.' });
+  }
+});
+
+app.delete('/admin/players', requireAdmin, async (_req, res) => {
+  try {
+    // Clear player records and their dependent lobby and match data together.
+    await pool.query(`
+      TRUNCATE TABLE users, user_sessions, doubles_parties, doubles_matches, doubles_match_players
+    `);
+    return res.json({ message: 'All players and their match history were deleted.' });
+  } catch (error) {
+    console.error('Player deletion failed:', error.code ?? error.name);
+    return res.status(500).json({ error: 'Could not delete the players.' });
   }
 });
 
