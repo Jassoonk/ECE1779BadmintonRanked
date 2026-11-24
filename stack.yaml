@@ -1,0 +1,62 @@
+version: "3.8"
+
+services:
+  app:
+    image: "${APP_IMAGE:?Set APP_IMAGE to the image available on both nodes}"
+    environment:
+      NODE_ENV: production
+      ADMIN_PASSWORD_FILE: /run/secrets/badminton_admin_password
+      PGPASSWORD_FILE: /run/secrets/badminton_db_password
+      PGHOST: db
+      PGUSER: badminton
+      PGDATABASE: badminton_ranked
+    secrets:
+      - badminton_admin_password
+      - badminton_db_password
+    # Ingress opens this port on both nodes. Restrict public TCP 3000 at the
+    # DigitalOcean firewall so public app traffic goes through Nginx on 443.
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 2
+      placement:
+        max_replicas_per_node: 1
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: badminton
+      POSTGRES_DB: badminton_ranked
+      POSTGRES_PASSWORD_FILE: /run/secrets/badminton_db_password
+    secrets:
+      - badminton_db_password
+      - badminton_invite_code
+    configs:
+      - source: schema
+        target: /docker-entrypoint-initdb.d/init.sql
+    volumes:
+      - type: bind
+        source: "${DB_DATA_DIR:?Set DB_DATA_DIR to a directory on the mounted DigitalOcean volume}"
+        target: /var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == badminton-manager
+
+configs:
+  schema:
+    file: ./database/init.sql
+
+secrets:
+  badminton_admin_password:
+    external: true
+  badminton_db_password:
+    external: true
+  badminton_invite_code:
+    external: true
