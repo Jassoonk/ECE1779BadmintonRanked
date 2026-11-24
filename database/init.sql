@@ -72,11 +72,14 @@ CREATE TABLE IF NOT EXISTS lobby_settings (
     invite_code TEXT NOT NULL CHECK (invite_code ~ '^[0-9]{6}$')
 );
 
--- Seed an empty lobby from the environment. Keep any code already saved by the admin.
+-- Seed an empty lobby from the Compose environment or the mounted Swarm secret.
 \set initial_invite_code ''
 \getenv initial_invite_code INITIAL_INVITE_CODE
 INSERT INTO lobby_settings (invite_code)
-SELECT :'initial_invite_code'
+SELECT COALESCE(
+    NULLIF(:'initial_invite_code', ''),
+    rtrim(pg_read_file('/run/secrets/badminton_invite_code'), E'\r\n')
+)
 WHERE NOT EXISTS (SELECT 1 FROM lobby_settings)
 ON CONFLICT (singleton) DO NOTHING;
 

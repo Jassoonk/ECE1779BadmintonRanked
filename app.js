@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
@@ -15,8 +16,11 @@ app.get('/admin', (_req, res) => {
   res.sendFile('admin.html', { root: 'frontend' });
 });
 
-// Configure the admin password through the environment on each replica.
-const adminPassword = process.env.ADMIN_PASSWORD;
+// Local Compose supplies the password directly. Swarm mounts it as a file.
+let adminPassword = process.env.ADMIN_PASSWORD;
+if (process.env.ADMIN_PASSWORD_FILE) {
+  adminPassword = readFileSync(process.env.ADMIN_PASSWORD_FILE, 'utf8').replace(/\n+$/, '');
+}
 
 app.post('/admin/login', async (req, res) => {
   res.set('Cache-Control', 'no-store');
