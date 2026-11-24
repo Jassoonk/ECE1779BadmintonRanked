@@ -1,3 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
+
+const token = existsSync('/run/secrets/do_api_token')
+    ? readFileSync('/run/secrets/do_api_token', 'utf8').trim()
+    : process.env.DO_API_TOKEN;
+
 async function getMetric(id, metric, extra = "") {
     const end = Math.floor(Date.now() / 1000);
     const start = end - 600;
@@ -6,7 +12,7 @@ async function getMetric(id, metric, extra = "") {
 
     const response = await fetch(url, {
         headers: {
-            Authorization: `Bearer ${process.env.DO_API_TOKEN}`
+            Authorization: `Bearer ${token}`
         }
     });
 
