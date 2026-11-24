@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import express from 'express';
 import { doubles } from './doubles.js';
 import { pool, checkDatabaseConnection } from './db.js';
+import { getMonitoring } from "./monitoring.js";
 
 // Configure the Express server for JSON API requests and static browser assets.
 const app = express();
@@ -70,6 +71,30 @@ async function requireAdmin(req, res, next) {
   }
   next();
 }
+
+app.get('/admin/queue-length', requireAdmin, async (req, res) => {
+    const { rows } = await pool.query(`
+        SELECT COUNT(*) + COUNT(partner_id) AS queue_length
+        FROM doubles_parties
+        WHERE queued_at IS NOT NULL
+    `);
+
+    res.json({ queueLength: Number(rows[0].queue_length) });
+});
+
+app.get('/admin/monitoring', requireAdmin, async (req, res) => {
+    try {
+        const [manager, worker] = await Promise.all([
+            getMonitoring(622789369),
+            getMonitoring(622850943)
+        ]);
+
+        res.json({ manager, worker });
+    } catch (error) {
+        console.error(error.message);
+        res.status(500).json({ error: "Monitoring unavailable" });
+    }
+});
 
 app.get('/admin/matches', requireAdmin, async (_req, res) => {
   try {

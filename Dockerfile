@@ -10,6 +10,7 @@ RUN npm ci --omit=dev
 COPY app.js ./
 COPY db.js ./
 COPY doubles.js ./
+COPY monitoring.js ./
 COPY frontend ./frontend
 
 # Run the app process as the non-root user provided by the base image.

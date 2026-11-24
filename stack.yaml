@@ -34,6 +34,7 @@ services:
       POSTGRES_DB: badminton_ranked
       POSTGRES_PASSWORD_FILE: /run/secrets/badminton_db_password
     secrets:
+      - do_api_token
       - badminton_db_password
       - badminton_invite_code
     configs:
@@ -59,4 +60,6 @@ secrets:
   badminton_db_password:
     external: true
   badminton_invite_code:
+    external: true
+  do_api_token:
     external: true
