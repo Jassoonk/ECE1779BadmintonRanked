@@ -29,6 +29,57 @@ async function checkHealth(path, statusElement) {
   }
 }
 
+async function loadMonitoring() {
+    if (adminDashboard.hidden) return;
+
+    try {
+        const response = await fetch('/admin/monitoring', {
+            headers: { Authorization: 'Bearer ' + adminToken }
+        });
+
+        if (!response.ok) throw new Error();
+
+        const data = await response.json();
+        const format = n => Number.isFinite(n) ? n.toFixed(2) : 'N/A';
+
+        for (const name of ['manager', 'worker']) {
+            const m = data[name];
+
+            document.getElementById(`${name}-metrics`).innerText =
+                `CPU: ${format(m.cpu)}%\n` +
+                `Memory: ${format(m.memory)}%\n` +
+                `Disk: ${format(m.disk)}%\n` +
+                `Network Inbound: ${format(m.inbound)}\n` +
+                `Network Outbound: ${format(m.outbound)}`;
+        }
+    } catch {
+        document.getElementById('manager-metrics').textContent = 'Unavailable';
+        document.getElementById('worker-metrics').textContent = 'Unavailable';
+    }
+}
+
+setInterval(loadMonitoring, 60000);
+
+async function loadQueueLength() {
+    if (adminDashboard.hidden) return;
+
+    try {
+        const response = await fetch('/admin/queue-length', {
+            headers: { Authorization: 'Bearer ' + adminToken }
+        });
+
+        if (!response.ok) throw new Error();
+
+        const data = await response.json();
+        document.getElementById('queue-length').textContent =
+            data.queueLength + ' players';
+    } catch {
+        document.getElementById('queue-length').textContent = 'Unavailable';
+    }
+}
+
+setInterval(loadQueueLength, 2000);
+
 const matchStates = {
   active: 'In play',
   pending_confirmation: 'Awaiting confirmation',
@@ -204,8 +255,11 @@ adminForm.addEventListener('submit', async (event) => {
         checkHealth('/health', appStatus),
         checkHealth('/db-health', dbStatus),
         loadCurrentMatches(),
-        loadAdminPlayers()
+        loadAdminPlayers(),
+        loadMonitoring(),
+        loadQueueLength()
       ]);
+
     } else {
       adminMessage.textContent = result.error || 'Could not check the password.';
     }
