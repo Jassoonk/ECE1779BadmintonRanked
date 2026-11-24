@@ -7,6 +7,7 @@ const registrationCard = document.querySelector('#registration-card');
 function showSignedIn(player) {
   signInForm.reset();
   signInForm.hidden = true;
+  document.querySelector('#match-history-link').hidden = false;
   registrationCard.classList.add('d-none');
   signInMessage.textContent = `Signed in as ${player.display_name}. Rating: ${player.rating}.`;
 }
