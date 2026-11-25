@@ -13,6 +13,7 @@ services:
     secrets:
       - badminton_admin_password
       - badminton_db_password
+      - do_api_token
     # Ingress opens this port on both nodes. Restrict public TCP 3000 at the
     # DigitalOcean firewall so public app traffic goes through Nginx on 443.
     ports:
@@ -34,7 +35,6 @@ services:
       POSTGRES_DB: badminton_ranked
       POSTGRES_PASSWORD_FILE: /run/secrets/badminton_db_password
     secrets:
-      - do_api_token
       - badminton_db_password
       - badminton_invite_code
     configs:
