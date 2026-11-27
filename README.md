@@ -413,10 +413,211 @@ PostgreSQL data is retained in the named volume across container recreation.
 
 Do not use `docker compose down -v` unless a complete database reset is intended, because this command removes the persistent database volume.
 
+### 7.3 Cloud Infrastructure
 
-## Deploy with HTTPS on a Droplet
+The production environment is deployed on DigitalOcean using a two-node Docker Swarm cluster.
 
-Start Compose on the Ubuntu Droplet as shown above and allow inbound TCP ports `80` and `443`. Run the following from the repo root in the same SSH session.
+| Component | Configuration |
+|---|---|
+| Manager Node | badminton-manager |
+| Worker Node | badminton-worker |
+| Operating System | Ubuntu |
+| Stack Name | badminton_ranked |
+| Application Image | badminton-ranked:demo-ready |
+| Application Replicas | 2 |
+| PostgreSQL Replicas | 1 |
+| Persistent Storage | 10 GB DigitalOcean Block Storage |
+| Volume Filesystem | ext4 |
+| Volume Mount Point | /mnt/badminton_data |
+| Database Data Directory | /mnt/badminton_data/postgres-demo |
+| Application Port | 3000 |
+| Public HTTP Port | 80 |
+| Public HTTPS Port | 443 |
+
+The manager and worker nodes communicate through the Swarm network. The PostgreSQL service is restricted to the manager node, where the persistent storage is attached.
+
+### 7.4 Docker Swarm Deployment
+
+The following steps describe how to reproduce the cloud deployment on a new environment.
+
+#### Step 1: Prepare the Cloud Nodes
+
+Create two Ubuntu Droplets on DigitalOcean and install Docker Engine on both nodes.
+
+Configure their hostnames as follows:
+
+- Manager: badminton-manager
+- Worker: badminton-worker
+
+The manager hostname must match the database placement constraint in stack.yaml.
+
+Configure the firewall to allow SSH from trusted sources, public HTTP and HTTPS traffic, and the required Swarm communication between trusted cluster nodes.
+
+Docker Swarm requires TCP port 2377, TCP and UDP port 7946, and UDP port 4789 for cluster communication. These ports should not be exposed to untrusted public traffic.
+
+Restrict public access to port 3000 so that users access the application through Nginx.
+
+#### Step 2: Initialize Docker Swarm
+
+On the manager node, initialize Swarm using its private IP address:
+
+```bash
+docker swarm init --advertise-addr <manager-private-ip>
+```
+
+Retrieve the worker join command:
+
+```bash
+docker swarm join-token worker
+```
+
+Run the generated join command on the worker node.
+
+Verify the cluster from the manager:
+
+```bash
+docker node ls
+```
+
+Both nodes should show Ready and Active.
+
+#### Step 3: Prepare Persistent Storage
+
+Create and attach a DigitalOcean Block Storage Volume to the manager Droplet.
+
+Configure the volume to use the ext4 filesystem and mount it at:
+
+```text
+/mnt/badminton_data
+```
+
+Verify that the volume is mounted:
+
+```bash
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
+mountpoint /mnt/badminton_data
+```
+
+Only after confirming that the volume is mounted, create the database data directory:
+
+```bash
+sudo mkdir -p /mnt/badminton_data/postgres-demo
+```
+
+The database service bind-mounts this directory to /var/lib/postgresql/data inside the PostgreSQL container.
+
+The volume should remain mounted across host restarts.
+
+#### Step 4: Prepare the Application Image
+
+Clone the repository on both nodes and ensure that both use the same source code revision.
+
+From the repository root on each node, build the application image:
+
+```bash
+docker build -t badminton-ranked:demo-ready .
+```
+
+Verify that the image is available on both nodes:
+
+```bash
+docker image ls badminton-ranked
+```
+
+For this small two-node cluster, the application image can be built locally on both nodes without requiring a separate container registry.
+
+#### Step 5: Create Docker Secrets
+
+The Swarm deployment requires four external secrets:
+
+| Secret Name | Purpose |
+|---|---|
+| badminton_admin_password | Administrator authentication |
+| badminton_db_password | PostgreSQL authentication |
+| badminton_invite_code | Initial six-digit lobby invite code |
+| do_api_token | DigitalOcean Monitoring API access |
+
+Prepare a separate file for each credential outside the Git repository. Restrict access to these files and do not commit them to version control.
+
+On the manager node, create the secrets using the credential files:
+
+```bash
+docker secret create badminton_admin_password /secure/path/admin_password
+docker secret create badminton_db_password /secure/path/db_password
+docker secret create badminton_invite_code /secure/path/invite_code
+docker secret create do_api_token /secure/path/do_api_token
+```
+
+Replace the example file paths with the actual secure credential file locations.
+
+Verify that all four secrets exist:
+
+```bash
+docker secret ls
+```
+
+These commands are intended for a new deployment. Existing secrets do not need to be recreated.
+
+#### Step 6: Configure Monitoring
+
+The monitoring backend retrieves metrics for the manager and worker Droplets using their DigitalOcean Droplet IDs.
+
+For a new deployment, update the two Droplet IDs in the /admin/monitoring route in app.js before building the application image on both nodes.
+
+DigitalOcean Monitoring must be enabled on both Droplets, and the API token must have the required monitoring permissions.
+
+#### Step 7: Deploy the Stack
+
+On the manager node, navigate to the repository root and configure the deployment variables:
+
+```bash
+export APP_IMAGE=badminton-ranked:demo-ready
+export DB_DATA_DIR=/mnt/badminton_data/postgres-demo
+```
+
+Deploy the application:
+
+```bash
+docker stack deploy --resolve-image never -c stack.yaml badminton_ranked
+```
+
+The stack configuration creates two application replicas and one PostgreSQL replica.
+
+The application replicas are distributed across the manager and worker nodes, while PostgreSQL remains on the manager node.
+
+#### Step 8: Verify the Deployment
+
+Check the deployed stack and services:
+
+```bash
+docker stack ls
+docker service ls
+```
+
+Check application replica placement:
+
+```bash
+docker service ps badminton_ranked_app
+```
+
+Check database placement:
+
+```bash
+docker service ps badminton_ranked_db
+```
+
+Verify the database storage configuration:
+
+```bash
+docker service inspect badminton_ranked_db --format '{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}'
+```
+
+The expected configuration is two running application replicas, one running database replica, and a database bind mount backed by the DigitalOcean volume.
+
+
+### 7.5 HTTPS Configuration
+
+After deploying the Docker Swarm stack, configure HTTPS on the manager Droplet. Allow inbound TCP ports 80 and 443. Run the following commands from the repository root in the same SSH session.
 
 ```bash
 sudo apt update && sudo apt install -y nginx snapd
@@ -458,3 +659,84 @@ systemctl list-timers --all '*certbot*'
 ```
 
 Open `https://YOUR_DROPLET_IP` using your public IP.
+
+### 7.6 Verification and Troubleshooting
+
+#### Check Service Status
+
+```bash
+docker node ls
+docker service ls
+docker service ps badminton_ranked_app
+docker service ps badminton_ranked_db
+```
+
+#### Check Application and Database Logs
+
+```bash
+docker service logs --tail 50 badminton_ranked_app
+docker service logs --tail 50 badminton_ranked_db
+```
+
+#### Verify Nginx and HTTPS
+
+```bash
+sudo nginx -t
+systemctl is-active nginx
+```
+
+Check the application and database health endpoints:
+
+```bash
+curl https://YOUR_DROPLET_IP/health
+curl https://YOUR_DROPLET_IP/db-health
+```
+
+Check HTTP redirection:
+
+```bash
+curl -I http://YOUR_DROPLET_IP
+```
+
+The HTTP endpoint should return a 308 Permanent Redirect to HTTPS.
+
+#### Check Certificate Renewal
+
+```bash
+sudo /snap/bin/certbot certificates
+systemctl list-timers --all '*certbot*'
+```
+
+The HTTPS certificate must remain valid throughout the grading period.
+
+#### Deployment Verification Results
+
+On November 27, 2026, we inspected the deployed cloud environment and confirmed the following:
+
+| Verification | Observed Result |
+|---|---|
+| Swarm cluster | Both nodes were Ready and Active |
+| Application replication | 2/2 replicas running |
+| Database service | 1/1 replica running |
+| Application placement | One replica on each node |
+| Database placement | Running on badminton-manager |
+| Persistent storage | 10 GB ext4 volume mounted |
+| Docker Secrets | All four required secrets present |
+| Nginx configuration | Configuration test successful |
+| Nginx service | Active |
+| Application health | Status OK |
+| Database health | Status OK |
+| HTTP redirection | 308 Permanent Redirect |
+| HTTPS certificate | Valid at the time of inspection |
+| Certificate renewal | Renewal timer scheduled |
+
+These checks confirm the deployment configuration and its operational status at the time of inspection. They do not by themselves establish performance, full fault tolerance, or successful certificate renewal.
+
+### 7.7 Deployment Credentials
+
+Sensitive deployment credentials are not included in the public source code.
+
+Local development uses environment variables, while the cloud deployment uses Docker Swarm Secrets.
+
+The credentials required for grading will be provided separately to the teaching assistant according to the course submission instructions.
+
