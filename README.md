@@ -740,3 +740,18 @@ Local development uses environment variables, while the cloud deployment uses Do
 
 The credentials required for grading will be provided separately to the teaching assistant according to the course submission instructions.
 
+## 8. Deployment Information
+
+The application is deployed on DigitalOcean using a two-node Docker Swarm cluster.
+
+- Live Application: [https://143.110.209.50](https://143.110.209.50)
+- Admin Dashboard: [https://143.110.209.50/admin](https://143.110.209.50/admin)
+- Application Health: [https://143.110.209.50/health](https://143.110.209.50/health)
+- Database Health: [https://143.110.209.50/db-health](https://143.110.209.50/db-health)
+
+The deployment runs two application replicas and one PostgreSQL replica across a manager and a worker node. PostgreSQL data is stored on a 10 GB DigitalOcean Block Storage Volume attached to the manager node.
+
+Public traffic is served through Nginx over HTTPS. The credentials required for testing the application and administrator features are provided separately according to the course submission instructions.
+
+The deployment will remain online throughout the grading period.
+
