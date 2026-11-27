@@ -64,6 +64,166 @@ Compared with our original proposal, we replaced the planned WebSocket-based com
 
 This technical stack focuses on meeting the project requirements without introducing unnecessary services or infrastructure.
 
+## 5. Features
+
+### 5.1 Application Features
+
+#### Player Registration and Authentication
+
+Players can register using their email address, password, display name, and starting rank. Bronze, Silver, and Gold correspond to initial ratings of 200, 400, and 600, respectively. Registered players can sign in and access the matchmaking lobby after verifying a six-digit invite code.
+
+#### Solo and Duo Queue
+
+Players can enter the solo queue individually or invite an online player to form a duo. A duo enters the queue only after the invited player accepts. Invitations expire after three minutes. Players can also cancel their queue entry before a match is created.
+
+The backend checks whether a player is already invited, queued, or participating in an unfinished match to prevent conflicting actions.
+
+#### Doubles Matchmaking
+
+The matchmaking algorithm searches up to 12 of the oldest eligible queued parties. It uses backtracking to find a group of four players and compares possible team combinations based on their average ratings.
+
+A match is created only when the difference between the two teams' average ratings is no greater than 50. Players who enter as a duo remain on the same team.
+
+This approach provides a simple way to improve match balance while prioritizing earlier queue entries. However, it does not guarantee a globally optimal match across the entire queue.
+
+#### Score Submission and Confirmation
+
+After a match, a player can submit the final score. A player from the opposing team must confirm the score before ratings are updated.
+
+If the opposing team disagrees, they can submit a corrected score for further review. This process continues until both teams agree on the result.
+
+The match progresses through four possible states: active, pending confirmation, pending correction, and completed.
+
+#### Rating System and Leaderboard
+
+The application uses an Elo-based rating system with a K-factor of 32. The expected result is calculated using the average ratings of the two teams.
+
+The expected winning probability is:
+
+E = 1 / (1 + 10^((R_opponent - R_team) / 400))
+
+Each player's updated rating is calculated as:
+
+R_new = R_old + 32(S - E)
+
+Here, S is 1 for a win and 0 for a loss. The updated rating is rounded to an integer and cannot fall below zero.
+
+Ratings are updated only after score confirmation. The leaderboard displays players in descending order of their current ratings.
+
+#### Match History
+
+Players can view the 10 most recent completed matches, including the team members, final scores, completion time, and individual ratings before and after each match.
+
+#### Admin Dashboard
+
+The admin dashboard provides tools for managing the application and monitoring the system. Administrators can:
+
+- View the current queue length and unfinished matches.
+- View and modify player ratings.
+- Check application and database health.
+- Monitor resource usage on both Droplets.
+- Configure the lobby invite code before player registration.
+- Reset player accounts and associated match data when necessary.
+
+Administrative operations require a valid admin session token.
+
+### 5.2 Cloud Computing Features
+
+#### Containerization
+
+The application uses Docker to package the Node.js backend, production dependencies, and frontend assets into a single container image.
+
+The Dockerfile uses the Node.js 24 Alpine base image and installs dependencies through npm ci using the package lockfile. The application runs as a non-root user to reduce unnecessary privileges.
+
+PostgreSQL runs in a separate container using the PostgreSQL 17 Alpine image.
+
+For local development, Docker Compose manages both services. The application connects to PostgreSQL through the service name db. A database readiness check prevents the application from starting before PostgreSQL is ready.
+
+#### Stateful Persistence
+
+PostgreSQL stores player accounts, sessions, invitations, queue entries, match results, and rating history.
+
+In the local environment, database files are stored in a Docker named volume. In the cloud environment, the database data directory is bind-mounted to a DigitalOcean Block Storage Volume.
+
+This separates persistent data from the database container lifecycle. Database records can therefore be retained when the container is recreated, provided that the underlying storage remains available.
+
+The same database initialization script is used for both local development and cloud deployment.
+
+#### Orchestration and Replication
+
+The cloud deployment uses Docker Swarm with two DigitalOcean Droplets: one manager and one worker.
+
+The application service is configured with two replicas, with a maximum of one replica per node. Swarm's ingress routing mesh distributes incoming requests across the available application replicas.
+
+Both replicas connect to the same PostgreSQL service. Player and admin sessions are stored in PostgreSQL rather than application memory, allowing requests to be handled by different replicas without requiring sticky sessions.
+
+The PostgreSQL service runs as a single replica with a placement constraint that keeps it on the manager node, where the persistent storage is mounted.
+
+Application replication improves availability during individual application container failures. However, the single PostgreSQL instance and manager-hosted infrastructure remain potential single points of failure.
+
+#### Data Consistency and Concurrency Control
+
+Multiple application replicas may receive matchmaking or score confirmation requests simultaneously. To maintain consistent shared state, the backend uses PostgreSQL transactions and transaction-level advisory locks to serialize critical lobby operations.
+
+Match and player records are also locked using SELECT FOR UPDATE during result confirmation. Changes are committed together, and failed operations are rolled back.
+
+A partial unique index prevents a player from belonging to more than one unfinished match. Match status validation also prevents completed matches from updating player ratings again.
+
+These mechanisms provide both application-level and database-level protection against conflicting operations.
+
+The shared advisory lock simplifies concurrency control but limits the number of critical lobby operations that can execute simultaneously. This is an acceptable trade-off for our small weekly badminton group.
+
+#### Monitoring and Observability
+
+The application provides two separate health endpoints:
+
+- /health checks whether the application server is responding.
+- /db-health checks whether PostgreSQL can execute a database query.
+
+Docker Swarm uses the application health endpoint to monitor application containers.
+
+The admin dashboard retrieves resource metrics for both the manager and worker Droplets through the DigitalOcean Monitoring API. The displayed metrics include CPU usage, memory usage, root filesystem disk usage, and inbound and outbound network traffic.
+
+The backend retrieves the most recent 10 minutes of monitoring data and processes the latest available values. Multiple metric requests are performed in parallel.
+
+Resource metrics are refreshed every 60 seconds, while the current queue length and unfinished matches are refreshed every two seconds.
+
+Application logs and error messages provide additional information for troubleshooting.
+
+#### Real-Time Functionality
+
+Instead of the WebSocket-based communication proposed initially, the final application uses HTTP polling to provide near-real-time updates.
+
+The player interface sends requests every two seconds when no user action is in progress. A presence heartbeat updates the player's online status, followed by a request for the latest invitation, queue, and match state.
+
+The backend queries PostgreSQL and returns the current information. The frontend updates the relevant page elements without requiring a manual refresh.
+
+When the player's match is completed, the frontend automatically reloads the leaderboard and the player's displayed rating.
+
+The player interface also prevents overlapping refresh requests and preserves score input while polling.
+
+Polling was selected because it is simpler to implement across multiple application replicas and does not require a separate WebSocket communication infrastructure. Its main limitations are repeated HTTP requests and a short delay between a state change and the next refresh.
+
+#### Security Enhancements
+
+Several security measures are implemented to protect player accounts, administrative operations, and deployment credentials.
+
+Player passwords are processed using scrypt with a randomly generated salt. The derived password keys and salts are stored instead of plaintext player passwords.
+
+Player and admin sessions use randomly generated tokens with an eight-hour expiration. Only SHA-256 token hashes are stored in PostgreSQL.
+
+Player sessions use HttpOnly cookies with SameSite protection. Secure cookies are enabled in the production environment. Admin requests use bearer tokens, which are verified by authorization middleware.
+
+The matchmaking lobby requires a valid six-digit invite code. The verification status is stored with the player's session.
+
+Sensitive deployment credentials are supplied through Docker Swarm Secrets, including the database password, admin password, initial invite code, and DigitalOcean API token.
+
+Nginx acts as a reverse proxy and terminates HTTPS connections using a Let's Encrypt certificate managed by Certbot. HTTP requests are redirected to HTTPS, and application traffic is forwarded to the Swarm-published application port.
+
+The Swarm configuration also requires public access to port 3000 to be restricted through the DigitalOcean firewall so that external application traffic uses HTTPS.
+
+These measures provide basic security for the intended small-group application, although the system has not undergone a comprehensive security audit.
+
 
 ## Run the app
 
