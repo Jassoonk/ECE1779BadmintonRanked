@@ -1,6 +1,39 @@
-# Badminton Ranked
+# Badminton Ranked: Cloud-Native Matchmaking for a Weekly Drop-in Group
 
-Badminton Ranked is a web app for doubles matchmaking, score confirmation, ratings, and match history.
+Badminton Ranked is a cloud-based web application for doubles matchmaking, score confirmation, player ratings, and match history.
+
+## 1. Team Information
+
+| Name | Student Number | Email |
+|---|---|---|
+| Molin Li | 1013212060 | molin.li@mail.utoronto.ca |
+| Jason Wei | TBD | TBD |
+
+## 2. Motivation
+
+Our project was inspired by a weekly badminton drop-in group where players usually form teams based on who is available. Without a regular organizer, random pairings often lead to uneven matches, making games less competitive and enjoyable. Players also have no consistent way to record match results or track their improvement over time.
+
+We wanted to bring the ranked matchmaking experience of competitive multiplayer video games into recreational badminton. By using player ratings and automatic matchmaking, our application helps members find more balanced doubles games while maintaining the flexibility of drop-in sessions.
+
+The shared matchmaking queue, match records, and player ratings also make this project a suitable application for exploring cloud computing, persistent storage, orchestration, and concurrent user interactions.
+
+## 3. Objectives
+
+The main objective of this project was to develop a self-service ranked matchmaking application for a weekly badminton group.
+
+Our specific objectives were to:
+
+- Provide secure, invitation-based player registration and authentication.
+- Support solo and duo queues for balanced 2v2 matchmaking.
+- Allow players to submit, confirm, and correct match scores.
+- Update player ratings, leaderboards, and match history based on confirmed results.
+- Provide automatic updates without requiring users to manually refresh the page.
+- Maintain persistent application data across container restarts and redeployments.
+- Deploy a containerized application on DigitalOcean using Docker Swarm with multiple application replicas.
+- Provide system monitoring and administrative tools.
+
+The project focuses on a single badminton group rather than a universal rating system or a multi-club platform.
+
 
 ## Run the app
 
