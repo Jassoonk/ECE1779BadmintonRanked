@@ -224,23 +224,195 @@ The Swarm configuration also requires public access to port 3000 to be restricte
 
 These measures provide basic security for the intended small-group application, although the system has not undergone a comprehensive security audit.
 
+## 6. User Guide
 
-## Run the app
+### 6.1 Player Guide
 
-Create `.env` in the repo root using your own admin password and six-digit invite code:
+#### Step 1: Register an Account
+
+1. Open the application homepage.
+2. Enter your email address, password, and display name.
+3. Select a starting rank: Bronze (200), Silver (400), or Gold (600).
+4. Click Register to create your account.
+
+#### Step 2: Sign In and Access the Lobby
+
+1. Sign in using your registered email address and password.
+2. Enter the six-digit invite code provided by the administrator.
+3. Click Verify code to access the matchmaking queue.
+
+#### Step 3: Join the Matchmaking Queue
+
+Players can choose between two queue modes:
+
+- Solo Queue: Join individually and wait for the system to match you with three other players.
+- Duo Queue: Select an online teammate and send an invitation. Once the teammate accepts, both players enter the queue together.
+
+Players can click Cancel Queue to leave the queue before a match is created.
+
+#### Step 4: Play the Match
+
+Once a suitable match is found, the application displays both teams and their player ratings.
+
+Players can then find an available court and play the badminton match. The match information is updated automatically without manually refreshing the page.
+
+#### Step 5: Submit and Confirm the Score
+
+1. After the match, enter your team's score and the opposing team's score.
+2. Click Submit score.
+3. A player from the opposing team reviews the submitted result.
+4. Click Agree to confirm the score or Dispute to submit a corrected score.
+5. If a correction is submitted, the other team must review it again.
+
+Player ratings are updated only after the result is confirmed.
+
+#### Step 6: View Rankings and Match History
+
+The leaderboard displays players in descending order of their current ratings.
+
+After a match is completed, the participating player's interface automatically refreshes the leaderboard and their displayed rating.
+
+Click Match History to view the 10 most recent completed matches, including scores, team members, and rating changes.
+
+### 6.2 Administrator Guide
+
+The administrator dashboard can be accessed by adding /admin to the application URL.
+
+1. Enter the administrator password to sign in.
+2. Check the application and database health status.
+3. View the current queue length and unfinished matches.
+4. Monitor CPU, memory, disk, and network usage on both cloud nodes.
+5. Modify individual player ratings when necessary.
+6. Configure the six-digit lobby invite code before any player accounts are registered.
+
+The administrator can also reset all player accounts and associated match data using the player deletion function. This operation is permanent and should only be used when a complete reset is required.
+
+The queue length and current match information are automatically refreshed every two seconds. Cloud resource metrics are refreshed every 60 seconds.
+
+## 7. Development Guide
+
+### 7.1 Prerequisites
+
+The following tools are required to run the application locally:
+
+- Git
+- Docker Engine or Docker Desktop
+- Docker Compose V2
+- A web browser
+
+Node.js and PostgreSQL do not need to be installed separately on the host machine because both run inside Docker containers.
+
+Cloud deployment additionally requires two DigitalOcean Droplets, Docker Swarm, DigitalOcean Block Storage, Nginx, and Certbot.
+
+### 7.2 Local Development
+
+#### Clone the Repository
+
+Clone this repository and navigate to its root directory.
+
+```bash
+git clone <repository-url>
+cd ECE1779BadmintonRanked
+```
+
+Replace `<repository-url>` with the GitHub repository URL.
+
+#### Configure Environment Variables
+
+Create a `.env` file in the repository root using your own administrator password and six-digit invite code:
 
 ```dotenv
 ADMIN_PASSWORD=your-admin-password
 INITIAL_INVITE_CODE=123456
 ```
 
-With Docker running, start the app from the repo root:
+The DigitalOcean API token is optional for local development. It is required only when retrieving DigitalOcean monitoring metrics.
+
+```dotenv
+DO_API_TOKEN=your-digitalocean-api-token
+```
+
+Do not commit the `.env` file or actual credentials to GitHub.
+
+#### Build and Start the Application
+
+With Docker running, execute:
 
 ```bash
 docker compose up -d --build --wait
 ```
 
-Open `http://localhost:3000` when running locally.
+Docker Compose builds the application image, starts PostgreSQL, and waits for the database readiness check before starting the application.
+
+The database schema is initialized automatically from `database/init.sql` when the database volume is empty.
+
+#### Access the Application
+
+Player interface:
+
+http://localhost:3000
+
+Administrator dashboard:
+
+http://localhost:3000/admin
+
+#### Verify the Local Deployment
+
+Check the container status:
+
+```bash
+docker compose ps
+```
+
+Check application health:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Check database health:
+
+```bash
+curl http://localhost:3000/db-health
+```
+
+Expected response:
+
+```json
+{"status":"ok","database":"connected"}
+```
+
+View application and database logs:
+
+```bash
+docker compose logs app
+docker compose logs db
+```
+
+#### Stop and Restart the Application
+
+Stop and remove the containers:
+
+```bash
+docker compose down
+```
+
+Restart the application:
+
+```bash
+docker compose up -d --build --wait
+```
+
+PostgreSQL data is retained in the named volume across container recreation.
+
+Do not use `docker compose down -v` unless a complete database reset is intended, because this command removes the persistent database volume.
+
 
 ## Deploy with HTTPS on a Droplet
 
